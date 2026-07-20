@@ -4,12 +4,25 @@ services:
       context: .
     environment:
       APP_ADDR: ":8080"
+      APP_ENV: "development"
       DATABASE_URL: "postgres://noapp:noapp@db:5432/noapp?sslmode=disable"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
     ports:
       - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.151.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/config.yaml:ro
     networks:
       - noapp-net
     restart: unless-stopped

@@ -1,11 +1,14 @@
 package app
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -64,7 +67,7 @@ func New(db *pgxpool.Pool) http.Handler {
 
 	static, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(static)))
-	return mux
+	return requestLogger(mux)
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -123,10 +126,12 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create user")
 		return
 	}
+	slog.InfoContext(r.Context(), "user created", "user.id", user.ID)
 	writeJSON(w, http.StatusCreated, user)
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	slog.Info("Hello from list projects")
 	rows, err := s.db.Query(r.Context(), `
 		SELECT p.id, p.name, p.description, p.created_at, count(t.id)
 		FROM projects p LEFT JOIN tasks t ON t.project_id = p.id
@@ -173,6 +178,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create project")
 		return
 	}
+	slog.InfoContext(r.Context(), "project created", "project.id", project.ID)
 	writeJSON(w, http.StatusCreated, project)
 }
 
@@ -247,6 +253,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create task")
 		return
 	}
+	slog.InfoContext(r.Context(), "task created", "task.id", task.ID, "project.id", task.ProjectID, "task.status", task.Status)
 	writeJSON(w, http.StatusCreated, task)
 }
 
@@ -282,7 +289,63 @@ func (s *Server) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not update task")
 		return
 	}
+	slog.InfoContext(r.Context(), "task status changed", "task.id", task.ID, "project.id", task.ProjectID, "task.status", task.Status)
 	writeJSON(w, http.StatusOK, task)
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" || len(requestID) > 128 {
+			requestID = newRequestID()
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		wrapped := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(wrapped, r)
+		if wrapped.status == 0 {
+			wrapped.status = http.StatusOK
+		}
+
+		level := slog.LevelInfo
+		if wrapped.status >= 500 {
+			level = slog.LevelError
+		} else if wrapped.status >= 400 {
+			level = slog.LevelWarn
+		}
+		slog.LogAttrs(r.Context(), level, "HTTP request completed",
+			slog.String("http.request.method", r.Method),
+			slog.String("url.path", r.URL.Path),
+			slog.Int("http.response.status_code", wrapped.status),
+			slog.Float64("http.server.request.duration_ms", float64(time.Since(started).Microseconds())/1000),
+			slog.String("request.id", requestID),
+		)
+	})
+}
+
+func newRequestID() string {
+	value := make([]byte, 8)
+	if _, err := rand.Read(value); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(value)
 }
 
 type scanner interface {

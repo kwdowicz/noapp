@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"noapp/internal/app"
+	"noapp/internal/telemetry"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,6 +18,19 @@ import (
 func main() {
 	addr := env("APP_ADDR", ":8080")
 	databaseURL := env("DATABASE_URL", "postgres://noapp:noapp@localhost:5432/noapp?sslmode=disable")
+	logger, shutdownLogs, err := telemetry.NewLogger(context.Background(), env("APP_ENV", "development"))
+	if err != nil {
+		slog.Error("initialize OpenTelemetry logs", "error", err)
+		os.Exit(1)
+	}
+	slog.SetDefault(logger)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownLogs(shutdownCtx); err != nil {
+			slog.Error("flush OpenTelemetry logs", "error", err)
+		}
+	}()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

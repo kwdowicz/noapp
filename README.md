@@ -1,6 +1,6 @@
 # NoApp Project Board
 
-NoApp is a deliberately small project-tracking application built as a clean baseline for observability experiments. It supports users, projects, tasks, a three-column board, task assignment, and status changes. It intentionally contains **no observability instrumentation yet**.
+NoApp is a deliberately small project-tracking application built for observability experiments. It supports users, projects, tasks, a three-column board, task assignment, and status changes. Application and HTTP request logs are instrumented with OpenTelemetry; traces and metrics are intentionally not included yet.
 
 ## Architecture
 
@@ -9,14 +9,14 @@ Browser
    |
    | HTTP :8080 (HTML/CSS/JS and JSON REST API)
    v
-Go application (app container)
+Go application (app container) ---- OTLP/HTTP logs ----> OpenTelemetry Collector
    |
-   | PostgreSQL protocol on the private Docker network
+   | PostgreSQL protocol
    v
 PostgreSQL 17 (db container + persistent named volume)
 ```
 
-The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. Docker Compose creates an explicit bridge network named `noapp-network`; PostgreSQL is not published to the host.
+The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. The `slog` bridge sends structured records through the OpenTelemetry Logs SDK and its batch processor to the Collector over OTLP/HTTP. The same records remain readable in the app's standard output. Docker Compose creates an explicit bridge network named `noapp-network`; neither PostgreSQL nor the Collector receiver is published to the host.
 
 ## Directory structure
 
@@ -24,11 +24,13 @@ The Go binary uses the standard HTTP server and embeds the static UI into the ex
 .
 |-- cmd/server/main.go          # Process startup and graceful shutdown
 |-- internal/app/server.go      # HTTP routes, validation, and SQL access
+|-- internal/telemetry/logs.go  # OpenTelemetry Logs SDK and slog bridge
 |-- internal/app/web/           # Embedded browser UI
 |   |-- index.html
 |   |-- app.js
 |   `-- styles.css
 |-- db/init.sql                 # Schema, indexes, and starter data
+|-- otel/collector.yaml         # OTLP logs pipeline and debug exporter
 |-- Dockerfile                  # Multi-stage Go image build
 |-- compose.yaml                # App, database, network, and volume
 |-- go.mod / go.sum
@@ -52,6 +54,20 @@ Check service health:
 ```powershell
 Invoke-RestMethod http://localhost:8080/api/health
 ```
+
+View the local application logs and the records received by OpenTelemetry:
+
+```powershell
+# Readable application output
+docker compose logs -f app
+
+# Collector output; look for LogRecord entries and service.name: noapp
+docker compose logs -f otel-collector
+```
+
+Each HTTP request produces a structured completion record with its method, path, status code, duration, and request ID. The response returns that ID in `X-Request-ID`. Create and update operations also emit domain records containing safe entity IDs and status values; names, emails, and request bodies are not logged.
+
+The app honors the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. Compose points it to `http://otel-collector:4318`; change that value to send logs to another OTLP/HTTP-compatible backend. Resource records include `service.name=noapp`, `service.version=1.0.0`, and the environment from `APP_ENV`.
 
 Stop the stack while retaining database data:
 
@@ -115,7 +131,7 @@ docker compose logs -f
 # Rebuild after a source change
 docker compose up --build -d
 
-# Run Go checks locally (Go 1.24+)
+# Run Go checks locally (Go 1.25+)
 go test ./...
 go vet ./...
 
@@ -130,4 +146,4 @@ docker compose ps
 docker network inspect noapp-network
 ```
 
-For future observability experiments, the natural instrumentation boundaries are incoming HTTP requests, database queries, process/runtime metrics, structured application logs, and context propagation. None are added in this baseline.
+OpenTelemetry logging is the first instrumentation layer in this sandbox. The Go Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades. Future experiments can add traces, metrics, database spans, and cross-signal correlation without replacing the existing logging pipeline.
