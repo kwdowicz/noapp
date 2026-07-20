@@ -14,6 +14,32 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/api/health | grep -q '\"status\":\"ok\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  traffic-simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    environment:
+      SIMULATOR_ADDR: ":8081"
+      TARGET_APP_URL: "http://app:8080"
+    ports:
+      - "8081:8081"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/api/health | grep -q '\"status\":\"ok\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     networks:
       - noapp-net
     restart: unless-stopped
@@ -23,6 +49,70 @@ services:
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    networks:
+      - noapp-net
+    depends_on:
+      loki:
+        condition: service_started
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:9090/-/healthy | grep -q Healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: noapp
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources/loki.yaml:/etc/grafana/provisioning/datasources/loki.yaml:ro
+      - ./grafana/provisioning/dashboards/noapp.yaml:/etc/grafana/provisioning/dashboards/noapp.yaml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      loki:
+        condition: service_started
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/health | grep -q '\"database\": \"ok\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     networks:
       - noapp-net
     restart: unless-stopped
@@ -53,3 +143,9 @@ networks:
 volumes:
   noapp-data:
     name: noapp-postgres-data
+  loki-data:
+    name: noapp-loki-data
+  grafana-data:
+    name: noapp-grafana-data
+  prometheus-data:
+    name: noapp-prometheus-data

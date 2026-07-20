@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: NoApp
+    orgId: 1
+    folder: NoApp
+    folderUid: noapp
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

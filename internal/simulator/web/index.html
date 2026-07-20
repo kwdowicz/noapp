@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoApp Workday Simulator</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">TRAFFIC CONTROL</p>
+      <h1>Workday Simulator</h1>
+      <p class="subtitle">50 people · 5 teams · synthetic project activity</p>
+    </div>
+    <div class="state"><span id="state-dot"></span><strong id="phase">Stopped</strong></div>
+  </header>
+
+  <main>
+    <section class="control-panel">
+      <div class="buttons">
+        <button id="start">Start workday</button>
+        <button id="stop" class="secondary">Stop</button>
+      </div>
+      <div class="speed-control">
+        <div><label for="speed">Traffic speed</label><strong id="speed-label">1×</strong></div>
+        <input id="speed" type="range" min="0.25" max="10" step="0.25" value="1">
+        <div class="range-labels"><span>Quiet 0.25×</span><span id="effective-rate">30 actions/min</span><span>Rush 10×</span></div>
+      </div>
+    </section>
+
+    <p id="notice" role="status" aria-live="polite"></p>
+
+    <section class="summary">
+      <article><span>People</span><strong id="workers">0</strong><small>of 50 initialized</small></article>
+      <article><span>Teams</span><strong id="teams">0</strong><small>of 5 initialized</small></article>
+      <article><span>Owned projects</span><strong id="projects">0</strong><small>maximum 10 per run</small></article>
+      <article><span>Total actions</span><strong id="actions">0</strong><small id="errors">0 errors</small></article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-heading"><h2>Owned task board</h2><span id="task-total">0 tasks</span></div>
+        <div class="task-columns">
+          <div><span class="status-dot todo"></span><label>To do</label><strong id="todo">0</strong></div>
+          <div><span class="status-dot progress"></span><label>In progress</label><strong id="in-progress">0</strong></div>
+          <div><span class="status-dot done"></span><label>Done</label><strong id="done">0</strong></div>
+        </div>
+        <p class="ownership">The simulator stores only IDs it creates in the current run. It never changes tasks belonging to pre-existing projects.</p>
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading"><h2>Action mix</h2><span>Current run</span></div>
+        <div id="action-mix" class="action-mix"><p class="empty">Start a workday to see traffic.</p></div>
+      </article>
+    </section>
+
+    <section class="panel activity-panel">
+      <div class="panel-heading"><h2>Recent activity</h2><span id="session">No active session</span></div>
+      <div id="activity" class="activity"><p class="empty">Synthetic activity will appear here.</p></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # NoApp Project Board
 
-NoApp is a deliberately small project-tracking application built for observability experiments. It supports users, projects, tasks, a three-column board, task assignment, and status changes. Application and HTTP request logs are instrumented with OpenTelemetry; traces and metrics are intentionally not included yet.
+NoApp is a deliberately small project-tracking application built for observability experiments. It supports users, projects, tasks, a three-column board, task assignment, and status changes. Application logs and HTTP request metrics are instrumented with OpenTelemetry; traces are intentionally not included yet.
 
 ## Architecture
 
@@ -14,24 +14,36 @@ Go application (app container) ---- OTLP/HTTP logs ----> OpenTelemetry Collector
    | PostgreSQL protocol
    v
 PostgreSQL 17 (db container + persistent named volume)
+
+OpenTelemetry Collector ---- native OTLP/HTTP ----> Loki ---- queries ----> Grafana
+          |
+          `---- Prometheus endpoint ----> Prometheus ---- queries ----> Grafana
+
+Traffic Simulator UI (:8081) ---- synthetic user activity ----> Go application (:8080)
 ```
 
-The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. The `slog` bridge sends structured records through the OpenTelemetry Logs SDK and its batch processor to the Collector over OTLP/HTTP. The same records remain readable in the app's standard output. Docker Compose creates an explicit bridge network named `noapp-network`; neither PostgreSQL nor the Collector receiver is published to the host.
+The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. The `slog` bridge sends structured records through the OpenTelemetry Logs SDK and its batch processor to the Collector over OTLP/HTTP. The OpenTelemetry Metrics SDK sends request counters and duration histograms through the same OTLP endpoint every five seconds. The Collector forwards logs to Loki and exposes metrics for Prometheus to scrape. Grafana starts with both Loki and Prometheus provisioned. Docker Compose creates an explicit bridge network named `noapp-network`; PostgreSQL, Loki, and the Collector receivers are not published to the host.
 
 ## Directory structure
 
 ```text
 .
 |-- cmd/server/main.go          # Process startup and graceful shutdown
+|-- cmd/simulator/main.go       # Traffic simulator process
 |-- internal/app/server.go      # HTTP routes, validation, and SQL access
 |-- internal/telemetry/logs.go  # OpenTelemetry Logs SDK and slog bridge
+|-- internal/simulator/         # Workload engine, target API client, and simulator UI
 |-- internal/app/web/           # Embedded browser UI
 |   |-- index.html
 |   |-- app.js
 |   `-- styles.css
 |-- db/init.sql                 # Schema, indexes, and starter data
 |-- otel/collector.yaml         # OTLP logs pipeline and debug exporter
+|-- loki/config.yaml            # Local filesystem log storage
+|-- prometheus/prometheus.yaml  # Collector scrape configuration
+|-- grafana/provisioning/       # Automatically provisioned data sources
 |-- Dockerfile                  # Multi-stage Go image build
+|-- Dockerfile.simulator        # Separate simulator image build
 |-- compose.yaml                # App, database, network, and volume
 |-- go.mod / go.sum
 `-- README.md
@@ -49,6 +61,55 @@ docker compose ps
 
 Open <http://localhost:8080>. The initial database contains two sample users, one project, and one task. Use **New project** and **Add task** in the UI; change a task's status with the selector on its card.
 
+Grafana is available at <http://localhost:3000> with development credentials `admin` / `noapp`. Open **Explore**, select the already-provisioned **Loki** data source, and query:
+
+```logql
+{service_name="noapp"}
+```
+
+Loki stores log data in the persistent `noapp-loki-data` volume. Grafana configuration and UI state persist in `noapp-grafana-data`.
+
+The **NoApp / NoApp HTTP Latency** dashboard is provisioned automatically. It includes overall P50/P95/P99 latency, percentile history, P95 and average latency by route, a route selector, and request rate for traffic context. Open it directly at <http://localhost:3000/d/noapp-http-latency/noapp-http-latency>.
+
+The **NoApp / NoApp HTTP Errors** dashboard compares normal responses (HTTP 1xx–3xx) with errors (HTTP 4xx–5xx). It includes current percentages, a normal/client-error/server-error donut, history, per-route error percentage, and request rate by response class. Open it directly at <http://localhost:3000/d/noapp-http-errors/noapp-http-errors>.
+
+Prometheus is available at <http://localhost:9090>. Its data persists in `noapp-prometheus-data`. In Grafana, select the provisioned **Prometheus** data source and try these PromQL queries:
+
+```promql
+# Request rate by route
+sum by (http_route) (rate(noapp_http_server_request_count_total[5m]))
+
+# 95th-percentile request duration in seconds
+histogram_quantile(0.95, sum by (le) (rate(noapp_http_server_request_duration_seconds_bucket[5m])))
+```
+
+The request metrics carry bounded `http_request_method`, `http_route`, and `http_response_status_code` labels. Raw URLs and request IDs are deliberately excluded from metrics to avoid unbounded label cardinality.
+
+## Traffic simulator
+
+Open <http://localhost:8081> to control the separate Workday Simulator. **Start workday** creates a fresh synthetic company of 50 users split across five teams, one initial project per team, and a small task backlog. The steady-state workload is intentionally read-heavy:
+
+| Activity | Approximate share |
+|---|---:|
+| Display an owned project board | 65% |
+| Add a task | 15% |
+| Move a task to in progress | 9% |
+| Complete a task | 7% |
+| Create another project | 4% |
+
+Project creation stops at ten projects per run. The engine retains only the IDs created in its current run, so it never changes tasks in pre-existing projects or projects left by an earlier run. Synthetic records remain in PostgreSQL after stopping; this makes the generated history available for later experiments. Recreating the database volume is the clean reset when desired.
+
+The default rate is 30 actions per minute. The UI can change it live from 0.25× (7.5 actions/minute) to 10× (300 actions/minute), or stop the workday entirely. Initialization actions are shown separately in the live activity feed and may briefly produce a higher burst.
+
+The simulator uses `gofakeit` for people, company, project, and task text. Its control API is:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/status` | Current phase, owned objects, statistics, and activity |
+| `POST` | `/api/start` | Start a fresh workday |
+| `POST` | `/api/stop` | Stop the current workday |
+| `PATCH` | `/api/speed` | Set `{ "multiplier": 0.25..10 }` |
+
 Check service health:
 
 ```powershell
@@ -61,13 +122,20 @@ View the local application logs and the records received by OpenTelemetry:
 # Readable application output
 docker compose logs -f app
 
-# Collector output; look for LogRecord entries and service.name: noapp
+# Collector debug output; look for LogRecord entries and service.name: noapp
 docker compose logs -f otel-collector
+
+# Loki and Grafana troubleshooting output
+docker compose logs -f loki grafana
+
+# Prometheus status and scrape target
+Invoke-RestMethod http://localhost:9090/-/healthy
+Invoke-RestMethod http://localhost:9090/api/v1/targets
 ```
 
 Each HTTP request produces a structured completion record with its method, path, status code, duration, and request ID. The response returns that ID in `X-Request-ID`. Create and update operations also emit domain records containing safe entity IDs and status values; names, emails, and request bodies are not logged.
 
-The app honors the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. Compose points it to `http://otel-collector:4318`; change that value to send logs to another OTLP/HTTP-compatible backend. Resource records include `service.name=noapp`, `service.version=1.0.0`, and the environment from `APP_ENV`.
+The app honors the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. Compose points it to `http://otel-collector:4318`; the Collector then fans records out to its debug exporter and Loki. Resource records include `service.name=noapp`, `service.version=1.0.0`, and the environment from `APP_ENV`.
 
 Stop the stack while retaining database data:
 
@@ -75,7 +143,7 @@ Stop the stack while retaining database data:
 docker compose down
 ```
 
-To remove the containers **and all NoApp database data**, run `docker compose down -v`.
+To remove the containers **and all NoApp database, Loki, Prometheus, and Grafana data**, run `docker compose down -v`.
 
 ## REST API overview
 
@@ -128,6 +196,9 @@ docker compose exec db psql -U noapp -d noapp -c "SELECT id, name FROM projects;
 # Follow application and database output
 docker compose logs -f
 
+# Follow only generated workload activity
+docker compose logs -f traffic-simulator
+
 # Rebuild after a source change
 docker compose up --build -d
 
@@ -146,4 +217,4 @@ docker compose ps
 docker network inspect noapp-network
 ```
 
-OpenTelemetry logging is the first instrumentation layer in this sandbox. The Go Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades. Future experiments can add traces, metrics, database spans, and cross-signal correlation without replacing the existing logging pipeline.
+OpenTelemetry logging and HTTP metrics form the current instrumentation layer. The Go metrics signal is stable; the Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades. Future experiments can add traces, database spans, business metrics, and cross-signal correlation without replacing the existing pipelines.

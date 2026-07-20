@@ -17,6 +17,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 //go:embed web/*
@@ -24,6 +27,11 @@ var webFiles embed.FS
 
 type Server struct {
 	db *pgxpool.Pool
+}
+
+type httpMetrics struct {
+	requestCount    metric.Int64Counter
+	requestDuration metric.Float64Histogram
 }
 
 type User struct {
@@ -53,8 +61,26 @@ type Task struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-func New(db *pgxpool.Pool) http.Handler {
+func New(db *pgxpool.Pool) (http.Handler, error) {
 	s := &Server{db: db}
+	meter := otel.Meter("noapp/http")
+	requestCount, err := meter.Int64Counter(
+		"noapp.http.server.request.count",
+		metric.WithDescription("Number of completed HTTP requests."),
+		metric.WithUnit("{request}"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create request counter: %w", err)
+	}
+	requestDuration, err := meter.Float64Histogram(
+		"noapp.http.server.request.duration",
+		metric.WithDescription("Duration of completed HTTP requests."),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create request duration histogram: %w", err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/users", s.listUsers)
@@ -67,7 +93,7 @@ func New(db *pgxpool.Pool) http.Handler {
 
 	static, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(static)))
-	return requestLogger(mux)
+	return requestLogger(mux, httpMetrics{requestCount: requestCount, requestDuration: requestDuration}), nil
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +101,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "database is unavailable")
 		return
 	}
+	slog.InfoContext(r.Context(), "health check completed", "database.status", "ok")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "ok"})
 }
 
@@ -95,6 +122,11 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		users = append(users, user)
 	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not finish loading users")
+		return
+	}
+	slog.InfoContext(r.Context(), "users listed", "users.count", len(users))
 	writeJSON(w, http.StatusOK, users)
 }
 
@@ -131,7 +163,6 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	slog.Info("Hello from list projects")
 	rows, err := s.db.Query(r.Context(), `
 		SELECT p.id, p.name, p.description, p.created_at, count(t.id)
 		FROM projects p LEFT JOIN tasks t ON t.project_id = p.id
@@ -151,6 +182,11 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		projects = append(projects, project)
 	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not finish loading projects")
+		return
+	}
+	slog.InfoContext(r.Context(), "projects listed", "projects.count", len(projects))
 	writeJSON(w, http.StatusOK, projects)
 }
 
@@ -207,6 +243,11 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		tasks = append(tasks, task)
 	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not finish loading tasks")
+		return
+	}
+	slog.InfoContext(r.Context(), "project tasks listed", "project.id", projectID, "tasks.count", len(tasks))
 	writeJSON(w, http.StatusOK, tasks)
 }
 
@@ -310,7 +351,7 @@ func (w *statusWriter) Write(body []byte) (int, error) {
 	return w.ResponseWriter.Write(body)
 }
 
-func requestLogger(next http.Handler) http.Handler {
+func requestLogger(next http.Handler, metrics httpMetrics) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		requestID := r.Header.Get("X-Request-ID")
@@ -337,6 +378,20 @@ func requestLogger(next http.Handler) http.Handler {
 			slog.Float64("http.server.request.duration_ms", float64(time.Since(started).Microseconds())/1000),
 			slog.String("request.id", requestID),
 		)
+
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		} else if _, routeOnly, found := strings.Cut(route, " "); found {
+			route = routeOnly
+		}
+		attributes := metric.WithAttributes(
+			attribute.String("http.request.method", r.Method),
+			attribute.String("http.route", route),
+			attribute.Int("http.response.status_code", wrapped.status),
+		)
+		metrics.requestCount.Add(r.Context(), 1, attributes)
+		metrics.requestDuration.Record(r.Context(), time.Since(started).Seconds(), attributes)
 	})
 }
 

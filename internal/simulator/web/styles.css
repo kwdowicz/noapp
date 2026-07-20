@@ -1,0 +1,49 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; background: #f3f5f8; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+header { padding: 28px clamp(20px, 5vw, 72px); display: flex; justify-content: space-between; align-items: center; color: white; background: linear-gradient(120deg, #111b34, #263a67); }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 5px; font-size: clamp(1.8rem, 4vw, 2.5rem); }
+.eyebrow { margin-bottom: 7px; color: #76efd0; font-size: .72rem; font-weight: 800; letter-spacing: .16em; }
+.subtitle { margin: 0; color: #bec8df; }
+.state { display: flex; gap: 9px; align-items: center; padding: 10px 14px; border: 1px solid #ffffff25; border-radius: 999px; background: #ffffff12; }
+#state-dot { width: 9px; height: 9px; border-radius: 50%; background: #8390a9; }
+#state-dot.live { background: #5ee1b8; box-shadow: 0 0 0 5px #5ee1b822; }
+#state-dot.busy { background: #f3bd5b; }
+main { width: min(1180px, calc(100% - 40px)); margin: 28px auto 60px; }
+.control-panel { display: grid; grid-template-columns: auto 1fr; gap: 34px; align-items: center; padding: 22px; border-radius: 14px; background: white; box-shadow: 0 5px 20px #1720330d; }
+.buttons { display: flex; gap: 9px; }
+button { border: 0; border-radius: 9px; padding: 12px 17px; font: inherit; font-weight: 750; color: white; background: #2467e8; cursor: pointer; }
+button.secondary { color: #25324c; background: #e9edf4; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.speed-control > div:first-child, .range-labels, .panel-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.speed-control label { font-size: .86rem; font-weight: 750; }
+.speed-control input { width: 100%; accent-color: #2467e8; }
+.range-labels { color: #798398; font-size: .72rem; }
+#notice { min-height: 22px; margin: 12px 0; color: #a43f36; }
+.summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+.summary article, .panel { padding: 20px; border: 1px solid #e4e8ef; border-radius: 13px; background: white; }
+.summary span { display: block; color: #707b90; font-size: .8rem; font-weight: 700; }
+.summary strong { display: block; margin: 7px 0 1px; font-size: 1.8rem; }
+.summary small { color: #8a93a4; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px; }
+.panel-heading h2 { margin: 0; font-size: 1rem; }
+.panel-heading span { color: #7d8798; font-size: .78rem; }
+.task-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 24px 0 18px; }
+.task-columns > div { padding: 14px; border-radius: 9px; background: #f5f7fa; }
+.task-columns label { color: #6f798b; font-size: .75rem; }
+.task-columns strong { display: block; margin-top: 5px; font-size: 1.45rem; }
+.status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; }
+.status-dot.todo { background: #8b96aa; } .status-dot.progress { background: #e4a42b; } .status-dot.done { background: #29a87c; }
+.ownership { margin: 0; color: #7c8698; font-size: .78rem; line-height: 1.5; }
+.action-mix { display: grid; gap: 9px; margin-top: 20px; }
+.mix-row { display: grid; grid-template-columns: 110px 1fr 38px; gap: 10px; align-items: center; font-size: .78rem; }
+.bar { height: 7px; overflow: hidden; border-radius: 5px; background: #edf0f5; }
+.bar span { display: block; height: 100%; border-radius: inherit; background: #557fe5; }
+.activity-panel { margin-top: 15px; }
+.activity { margin-top: 15px; display: grid; }
+.event { display: grid; grid-template-columns: 75px 120px 1fr; gap: 12px; padding: 10px 0; border-top: 1px solid #edf0f4; font-size: .8rem; }
+.event time { color: #8992a3; } .event b { color: #355baf; } .event.failed b { color: #b0443a; }
+.empty { color: #929aaa; font-size: .82rem; }
+@media (max-width: 800px) { header { align-items: flex-start; gap: 15px; } .control-panel, .grid { grid-template-columns: 1fr; } .summary { grid-template-columns: 1fr 1fr; } .event { grid-template-columns: 65px 1fr; } .event span { grid-column: 1 / -1; } }
+@media (max-width: 480px) { .summary { grid-template-columns: 1fr; } .buttons { flex-direction: column; } }
