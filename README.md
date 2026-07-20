@@ -1,6 +1,6 @@
 # NoApp Project Board
 
-NoApp is a deliberately small project-tracking application built for observability experiments. It supports users, projects, tasks, a three-column board, task assignment, and status changes. Application logs and HTTP request metrics are instrumented with OpenTelemetry; traces are intentionally not included yet.
+NoApp is a deliberately small project-tracking application built for observability experiments for people taht want to learn it and explore it. It supports users, projects, tasks, a three-column board, task assignment, and status changes. Application logs and HTTP request metrics are instrumented with OpenTelemetry; traces are intentionally not included yet.
 
 ## Architecture
 

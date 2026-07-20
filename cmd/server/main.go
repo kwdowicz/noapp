@@ -13,40 +13,26 @@ import (
 	"noapp/internal/telemetry"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func main() {
 	addr := env("APP_ADDR", ":8080")
 	databaseURL := env("DATABASE_URL", "postgres://noapp:noapp@localhost:5432/noapp?sslmode=disable")
-	environment := env("APP_ENV", "development")
-	logger, shutdownLogs, err := telemetry.NewLogger(context.Background(), environment)
-	if err != nil {
-		slog.Error("initialize OpenTelemetry logs", "error", err)
-		os.Exit(1)
-	}
-	slog.SetDefault(logger)
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := shutdownLogs(shutdownCtx); err != nil {
-			slog.Error("flush OpenTelemetry logs", "error", err)
-		}
-	}()
-	meterProvider, err := telemetry.NewMeterProvider(context.Background(), environment)
-	if err != nil {
-		slog.Error("initialize OpenTelemetry metrics", "error", err)
-		os.Exit(1)
-	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := meterProvider.Shutdown(shutdownCtx); err != nil {
-			slog.Error("flush OpenTelemetry metrics", "error", err)
-		}
-	}()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	telemetry.SetupLogger(os.Stderr)
+
+	shutdownTelemetry, err := telemetry.Setup(ctx, "noapp")
+	if err != nil {
+		slog.Error("initialize telemetry", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		_ = shutdownTelemetry(ctx)
+	}()
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -60,14 +46,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler, err := app.New(pool)
-	if err != nil {
-		slog.Error("initialize HTTP instrumentation", "error", err)
-		os.Exit(1)
-	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           handler,
+		Handler:           otelhttp.NewHandler(app.New(pool), "http.server"),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
