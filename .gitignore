@@ -1,0 +1,6 @@
+.env
+noapp
+*.exe
+coverage.out
+.idea/
+.vscode/

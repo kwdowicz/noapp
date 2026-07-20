@@ -1,0 +1,43 @@
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    email TEXT NOT NULL UNIQUE CHECK (length(trim(email)) > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    description TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id BIGSERIAL PRIMARY KEY,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    assignee_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'done')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS tasks_project_id_idx ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS tasks_assignee_id_idx ON tasks(assignee_id);
+
+INSERT INTO users (name, email) VALUES
+    ('Ada Lovelace', 'ada@example.test'),
+    ('Grace Hopper', 'grace@example.test')
+ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO projects (name, description)
+SELECT 'Observability Lab', 'A sample project ready for experimentation.'
+WHERE NOT EXISTS (SELECT 1 FROM projects);
+
+INSERT INTO tasks (project_id, assignee_id, title, description, status)
+SELECT p.id, u.id, 'Build the sample application', 'Create a useful baseline before adding instrumentation.', 'in_progress'
+FROM projects p CROSS JOIN users u
+WHERE p.name = 'Observability Lab' AND u.email = 'ada@example.test'
+  AND NOT EXISTS (SELECT 1 FROM tasks)
+LIMIT 1;

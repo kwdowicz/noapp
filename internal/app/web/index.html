@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoApp Project Board</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">OBSERVABILITY SANDBOX</p>
+      <h1>NoApp Project Board</h1>
+    </div>
+    <button class="secondary" id="new-project-button">+ New project</button>
+  </header>
+
+  <main>
+    <section class="toolbar">
+      <label for="project-select">Project</label>
+      <select id="project-select"></select>
+      <p id="project-description"></p>
+      <button id="new-task-button">+ Add task</button>
+    </section>
+
+    <div id="notice" role="status" aria-live="polite"></div>
+    <section class="board" id="board" aria-label="Task board"></section>
+  </main>
+
+  <dialog id="project-dialog">
+    <form id="project-form">
+      <h2>Create project</h2>
+      <label>Name<input name="name" required maxlength="120"></label>
+      <label>Description<textarea name="description" rows="3" maxlength="500"></textarea></label>
+      <div class="actions"><button type="button" class="secondary cancel">Cancel</button><button>Create</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="task-dialog">
+    <form id="task-form">
+      <h2>Add task</h2>
+      <label>Title<input name="title" required maxlength="160"></label>
+      <label>Description<textarea name="description" rows="3" maxlength="1000"></textarea></label>
+      <label>Assignee<select name="assignee_id"><option value="">Unassigned</option></select></label>
+      <label>Status<select name="status"><option value="todo">To do</option><option value="in_progress">In progress</option><option value="done">Done</option></select></label>
+      <div class="actions"><button type="button" class="secondary cancel">Cancel</button><button>Add task</button></div>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+services:
+  app:
+    build:
+      context: .
+    environment:
+      APP_ADDR: ":8080"
+      DATABASE_URL: "postgres://noapp:noapp@db:5432/noapp?sslmode=disable"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: noapp
+      POSTGRES_USER: noapp
+      POSTGRES_PASSWORD: noapp
+    volumes:
+      - noapp-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noapp -d noapp"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+networks:
+  noapp-net:
+    name: noapp-network
+    driver: bridge
+
+volumes:
+  noapp-data:
+    name: noapp-postgres-data
