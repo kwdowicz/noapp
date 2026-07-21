@@ -1,0 +1,231 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Open Profiles Drilldown",
+      "tooltip": "Explore and compare all profile types",
+      "type": "link",
+      "url": "/a/grafana-pyroscope-app/explore"
+    }
+  ],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Current P95 HTTP request latency across the application.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 3,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.5 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(noapp_http_server_request_duration_seconds_bucket[$__rate_interval])))",
+          "instant": true,
+          "legendFormat": "P95 latency",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "P95 latency",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Current request throughput across all routes.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(noapp_http_server_request_count_total[$__rate_interval]))",
+          "instant": true,
+          "legendFormat": "Requests",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Request rate",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "P95 and P99 latency over time, providing timing context for profile changes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 3, "showPoints": "never", "spanNulls": false },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(noapp_http_server_request_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "P95",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(noapp_http_server_request_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "P99",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Tail latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" },
+      "description": "Aggregated CPU samples reveal which call stacks consume processor time. Select either Go process with the Profile service variable.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 6 },
+      "id": 4,
+      "options": {},
+      "targets": [
+        {
+          "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" },
+          "groupBy": [],
+          "heatmapType": "individual",
+          "includeExemplars": false,
+          "includeHeatmap": false,
+          "labelSelector": "{service_name=\"$profile_service\"}",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "queryType": "profile",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU flame graph",
+      "type": "flamegraph"
+    },
+    {
+      "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" },
+      "description": "Functions responsible for allocated bytes during the selected time range.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 13, "w": 12, "x": 0, "y": 20 },
+      "id": 5,
+      "options": {},
+      "targets": [
+        {
+          "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" },
+          "groupBy": [],
+          "heatmapType": "individual",
+          "includeExemplars": false,
+          "includeHeatmap": false,
+          "labelSelector": "{service_name=\"$profile_service\"}",
+          "profileTypeId": "memory:alloc_space:bytes:space:bytes",
+          "queryType": "profile",
+          "refId": "A"
+        }
+      ],
+      "title": "Allocation flame graph",
+      "type": "flamegraph"
+    },
+    {
+      "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" },
+      "description": "Functions retaining live heap bytes, useful for investigating memory growth.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 13, "w": 12, "x": 12, "y": 20 },
+      "id": 6,
+      "options": {},
+      "targets": [
+        {
+          "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" },
+          "groupBy": [],
+          "heatmapType": "individual",
+          "includeExemplars": false,
+          "includeHeatmap": false,
+          "labelSelector": "{service_name=\"$profile_service\"}",
+          "profileTypeId": "memory:inuse_space:bytes:space:bytes",
+          "queryType": "profile",
+          "refId": "A"
+        }
+      ],
+      "title": "Live heap flame graph",
+      "type": "flamegraph"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": ["noapp", "performance", "profiling", "pyroscope"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "noapp", "value": "noapp" },
+        "hide": 0,
+        "label": "Profile service",
+        "name": "profile_service",
+        "options": [
+          { "selected": true, "text": "noapp", "value": "noapp" },
+          { "selected": false, "text": "noapp-simulator", "value": "noapp-simulator" }
+        ],
+        "query": "noapp,noapp-simulator",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "NoApp Performance Profiles",
+  "uid": "noapp-performance-profiles",
+  "version": 1,
+  "weekStart": ""
+}

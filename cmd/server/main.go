@@ -59,6 +59,17 @@ func main() {
 		_ = tracerProvider.Shutdown(shutdownCtx)
 	}()
 
+	shutdownProfiler, err := telemetry.NewProfiler(env("PYROSCOPE_SERVER_ADDRESS", ""), "noapp", environment)
+	if err != nil {
+		slog.Error("initialize continuous profiling", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownProfiler(); err != nil {
+			slog.Error("stop continuous profiling", "error", err)
+		}
+	}()
+
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		slog.Error("parse database configuration", "error", err)

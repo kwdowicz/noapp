@@ -53,6 +53,13 @@ datasources:
         queries:
           - name: Request rate
             query: sum(rate(noapp_http_server_request_count_total{$$__tags}[5m]))
+      tracesToProfiles:
+        datasourceUid: pyroscope
+        tags:
+          - key: service.name
+            value: service_name
+        profileTypeId: process_cpu:cpu:nanoseconds:cpu:nanoseconds
+        customQuery: false
       nodeGraph:
         enabled: true
       streamingEnabled:
@@ -60,3 +67,13 @@ datasources:
         metrics: true
       spanBar:
         type: Duration
+
+  - name: Pyroscope
+    uid: pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://pyroscope:4040
+    isDefault: false
+    editable: false
+    jsonData:
+      minStep: 10s

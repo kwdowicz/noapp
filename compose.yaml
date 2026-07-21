@@ -7,12 +7,15 @@ services:
       APP_ENV: "development"
       DATABASE_URL: "postgres://noapp:noapp@db:5432/noapp?sslmode=disable"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      PYROSCOPE_SERVER_ADDRESS: "http://pyroscope:4040"
     ports:
       - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
       otel-collector:
+        condition: service_started
+      pyroscope:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/api/health | grep -q '\"status\":\"ok\"'"]
@@ -30,6 +33,8 @@ services:
     environment:
       SIMULATOR_ADDR: ":8081"
       TARGET_APP_URL: "http://app:8080"
+      APP_ENV: "development"
+      PYROSCOPE_SERVER_ADDRESS: "http://pyroscope:4040"
     ports:
       - "8081:8081"
     depends_on:
@@ -102,6 +107,16 @@ services:
       - noapp-net
     restart: unless-stopped
 
+  pyroscope:
+    image: grafana/pyroscope:2.0.2
+    volumes:
+      - pyroscope-data:/data
+      - pyroscope-compactor-data:/data-compactor
+      - pyroscope-metastore-data:/data-metastore
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:13.1.0
     environment:
@@ -122,6 +137,8 @@ services:
       prometheus:
         condition: service_healthy
       tempo:
+        condition: service_started
+      pyroscope:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/health | grep -q '\"database\": \"ok\"'"]
@@ -166,3 +183,9 @@ volumes:
     name: noapp-prometheus-data
   tempo-data:
     name: noapp-tempo-data
+  pyroscope-data:
+    name: noapp-pyroscope-data
+  pyroscope-compactor-data:
+    name: noapp-pyroscope-compactor-data
+  pyroscope-metastore-data:
+    name: noapp-pyroscope-metastore-data

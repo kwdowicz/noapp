@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 
+	otelpyroscope "github.com/grafana/otel-profiling-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -38,7 +39,9 @@ func NewTracerProvider(ctx context.Context, environment string) (*sdktrace.Trace
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
 	)
-	otel.SetTracerProvider(provider)
+	// The wrapper adds trace and span IDs to CPU samples, allowing Grafana to
+	// navigate directly from a Tempo span to its corresponding profile.
+	otel.SetTracerProvider(otelpyroscope.NewTracerProvider(provider))
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},

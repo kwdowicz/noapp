@@ -1,6 +1,6 @@
 # NoApp Project Board
 
-NoApp is a deliberately small project-tracking application built for observability experiments. It supports users, projects, tasks, a three-column board, task assignment, and status changes. Application logs, HTTP request metrics, and distributed traces are instrumented with OpenTelemetry.
+NoApp is a deliberately small project-tracking application built for observability experiments. It supports users, projects, tasks, a three-column board, task assignment, and status changes. Application logs, HTTP request metrics, distributed traces, and continuous performance profiles form a four-signal observability stack.
 
 ## Architecture
 
@@ -21,9 +21,11 @@ OpenTelemetry Collector ---- native OTLP/HTTP ----> Loki ---- queries ----> Graf
           `---- OTLP/gRPC traces ----> Tempo ---- queries ----> Grafana
 
 Traffic Simulator UI (:8081) ---- synthetic user activity ----> Go application (:8080)
+
+Go application + simulator ---- CPU/memory/runtime profiles ----> Pyroscope ---- queries ----> Grafana
 ```
 
-The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. Incoming requests create server spans, and each PostgreSQL operation creates a child database span. W3C Trace Context and baggage are accepted from callers. Logs written with the request context carry the active trace and span IDs, which provides trace-to-log correlation. The Collector prints spans through its debug exporter and also sends them to Tempo for persistent local storage and TraceQL searches. Logs go to Loki and metrics are exposed for Prometheus to scrape. Grafana starts with Loki, Prometheus, and Tempo provisioned. Docker Compose creates an explicit bridge network named `noapp-network`; PostgreSQL, Loki, Tempo, and the Collector receivers are not published to the host.
+The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. Incoming requests create server spans, and each PostgreSQL operation creates a child database span. W3C Trace Context and baggage are accepted from callers. Logs written with the request context carry the active trace and span IDs, which provides trace-to-log correlation. The Collector prints spans through its debug exporter and also sends them to Tempo for persistent local storage and TraceQL searches. Logs go to Loki and metrics are exposed for Prometheus to scrape. Both Go processes continuously push CPU, allocation, live-heap, goroutine, mutex, and blocking profiles to Pyroscope. The app's CPU samples include trace and span IDs, which provides trace-to-profile correlation. Grafana starts with Loki, Prometheus, Tempo, and Pyroscope provisioned. Docker Compose creates an explicit bridge network named `noapp-network`; PostgreSQL, Loki, Tempo, Pyroscope, and the Collector receivers are not published to the host.
 
 ## Directory structure
 
@@ -35,6 +37,7 @@ The Go binary uses the standard HTTP server and embeds the static UI into the ex
 |-- internal/telemetry/logs.go  # OpenTelemetry Logs SDK and slog bridge
 |-- internal/telemetry/metrics.go # OpenTelemetry Metrics SDK and OTLP exporter
 |-- internal/telemetry/traces.go  # OpenTelemetry Traces SDK, sampler, and propagation
+|-- internal/telemetry/profiles.go # Pyroscope continuous runtime profiling
 |-- internal/simulator/         # Workload engine, target API client, and simulator UI
 |-- internal/app/web/           # Embedded browser UI
 |   |-- index.html
@@ -45,6 +48,7 @@ The Go binary uses the standard HTTP server and embeds the static UI into the ex
 |-- loki/config.yaml            # Local filesystem log storage
 |-- prometheus/prometheus.yaml  # Collector scrape configuration
 |-- tempo/tempo.yaml            # Single-binary Tempo with local trace storage
+|-- grafana/dashboards/performance-profiles.json # Performance and flame graphs
 |-- grafana/provisioning/       # Automatically provisioned data sources
 |-- Dockerfile                  # Multi-stage Go image build
 |-- Dockerfile.simulator        # Separate simulator image build
@@ -79,11 +83,15 @@ The provisioned **Tempo** data source is available in Grafana Explore. Select Te
 { resource.service.name = "noapp" }
 ```
 
-Opening a span provides a **Logs for this span** link to the corresponding Loki records and a **Request rate** link to related Prometheus metrics. Tempo stores local development trace blocks in the persistent `noapp-tempo-data` volume; the single-binary setup uses Tempo's default 14-day block retention.
+Opening a span provides a **Logs for this span** link to the corresponding Loki records, a **Request rate** link to related Prometheus metrics, and a **Profiles for this span** link for CPU samples captured during that span. Tempo stores local development trace blocks in the persistent `noapp-tempo-data` volume; the single-binary setup uses Tempo's default 14-day block retention.
 
 The **NoApp / NoApp HTTP Latency** dashboard is provisioned automatically. It includes overall P50/P95/P99 latency, percentile history, P95 and average latency by route, a route selector, and request rate for traffic context. Open it directly at <http://localhost:3000/d/noapp-http-latency/noapp-http-latency>.
 
 The **NoApp / NoApp HTTP Errors** dashboard compares normal responses (HTTP 1xx–3xx) with errors (HTTP 4xx–5xx). It includes current percentages, a normal/client-error/server-error donut, history, per-route error percentage, and request rate by response class. Open it directly at <http://localhost:3000/d/noapp-http-errors/noapp-http-errors>.
+
+The **NoApp / NoApp Performance Profiles** dashboard combines P95/P99 latency and throughput with CPU, allocation, and live-heap flame graphs. Its service selector switches between the application and traffic simulator. Open it directly at <http://localhost:3000/d/noapp-performance-profiles/noapp-performance-profiles>, or use **Drilldown > Profiles** for CPU, memory, goroutine, mutex, and blocking analysis and profile comparisons.
+
+Pyroscope profile data persists in the `noapp-pyroscope-*` volumes. Profiles are uploaded every 10 seconds, so a newly started process needs at least one upload interval before it appears in Grafana.
 
 Prometheus is available at <http://localhost:9090>. Its data persists in `noapp-prometheus-data`. In Grafana, select the provisioned **Prometheus** data source and try these PromQL queries:
 
@@ -143,11 +151,15 @@ docker compose logs -f loki grafana
 # Prometheus status and scrape target
 Invoke-RestMethod http://localhost:9090/-/healthy
 Invoke-RestMethod http://localhost:9090/api/v1/targets
+
+# Pyroscope and profiling troubleshooting
+docker compose logs -f pyroscope app traffic-simulator
+curl.exe -u admin:noapp http://localhost:3000/api/datasources/uid/pyroscope/health
 ```
 
 Each HTTP request produces a structured completion record with its method, path, status code, duration, and request ID. The response returns that ID in `X-Request-ID`. Create and update operations also emit domain records containing safe entity IDs and status values; names, emails, and request bodies are not logged.
 
-The app honors the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. Compose points it to `http://otel-collector:4318`; signal-specific OTLP/HTTP paths such as `/v1/traces` are added by the SDK. Resource records include `service.name=noapp`, `service.version=1.0.0`, and the environment from `APP_ENV`.
+The app honors the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. Compose points it to `http://otel-collector:4318`; signal-specific OTLP/HTTP paths such as `/v1/traces` are added by the SDK. `PYROSCOPE_SERVER_ADDRESS` enables continuous profiling and points both Go processes to `http://pyroscope:4040` in Compose. Resource records include `service.name=noapp`, `service.version=1.0.0`, and the environment from `APP_ENV`; profile records use `service_name=noapp` or `service_name=noapp-simulator`.
 
 ## Traces
 
@@ -168,7 +180,7 @@ Stop the stack while retaining database data:
 docker compose down
 ```
 
-To remove the containers **and all NoApp database, Loki, Prometheus, Tempo, and Grafana data**, run `docker compose down -v`.
+To remove the containers **and all NoApp database, Loki, Prometheus, Tempo, Pyroscope, and Grafana data**, run `docker compose down -v`.
 
 ## REST API overview
 
@@ -242,4 +254,4 @@ docker compose ps
 docker network inspect noapp-network
 ```
 
-OpenTelemetry logs, metrics, HTTP server spans, PostgreSQL child spans, propagation, trace/log correlation, and Tempo storage form the current instrumentation layer. The Go traces and metrics signals are stable; the Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades.
+OpenTelemetry logs, metrics, HTTP server spans, PostgreSQL child spans, propagation, trace/log correlation, Pyroscope runtime profiles, and trace/profile correlation form the current instrumentation layer. The Go traces and metrics signals are stable; the Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades.

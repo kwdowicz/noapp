@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"noapp/internal/simulator"
+	"noapp/internal/telemetry"
 )
 
 func main() {
@@ -25,6 +26,17 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	environment := env("APP_ENV", "development")
+	shutdownProfiler, err := telemetry.NewProfiler(env("PYROSCOPE_SERVER_ADDRESS", ""), "noapp-simulator", environment)
+	if err != nil {
+		slog.Error("initialize continuous profiling", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownProfiler(); err != nil {
+			slog.Error("stop continuous profiling", "error", err)
+		}
+	}()
 	go func() {
 		slog.Info("traffic simulator started", "address", addr, "target", target)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
