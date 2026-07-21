@@ -19,7 +19,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 //go:embed web/*
@@ -364,6 +366,24 @@ func requestLogger(next http.Handler, metrics httpMetrics) http.Handler {
 		if wrapped.status == 0 {
 			wrapped.status = http.StatusOK
 		}
+		duration := time.Since(started)
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		} else if _, routeOnly, found := strings.Cut(route, " "); found {
+			route = routeOnly
+		}
+
+		span := trace.SpanFromContext(r.Context())
+		span.SetName(r.Method + " " + route)
+		span.SetAttributes(
+			attribute.String("http.route", route),
+			attribute.Int("http.response.status_code", wrapped.status),
+			attribute.String("request.id", requestID),
+		)
+		if wrapped.status >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, http.StatusText(wrapped.status))
+		}
 
 		level := slog.LevelInfo
 		if wrapped.status >= 500 {
@@ -375,23 +395,17 @@ func requestLogger(next http.Handler, metrics httpMetrics) http.Handler {
 			slog.String("http.request.method", r.Method),
 			slog.String("url.path", r.URL.Path),
 			slog.Int("http.response.status_code", wrapped.status),
-			slog.Float64("http.server.request.duration_ms", float64(time.Since(started).Microseconds())/1000),
+			slog.Float64("http.server.request.duration_ms", float64(duration.Microseconds())/1000),
 			slog.String("request.id", requestID),
 		)
 
-		route := r.Pattern
-		if route == "" {
-			route = "unmatched"
-		} else if _, routeOnly, found := strings.Cut(route, " "); found {
-			route = routeOnly
-		}
 		attributes := metric.WithAttributes(
 			attribute.String("http.request.method", r.Method),
 			attribute.String("http.route", route),
 			attribute.Int("http.response.status_code", wrapped.status),
 		)
 		metrics.requestCount.Add(r.Context(), 1, attributes)
-		metrics.requestDuration.Record(r.Context(), time.Since(started).Seconds(), attributes)
+		metrics.requestDuration.Record(r.Context(), duration.Seconds(), attributes)
 	})
 }
 

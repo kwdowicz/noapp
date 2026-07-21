@@ -12,6 +12,7 @@ import (
 	"noapp/internal/app"
 	"noapp/internal/telemetry"
 
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -23,18 +24,48 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	telemetry.SetupLogger(os.Stderr)
-
-	shutdownTelemetry, err := telemetry.Setup(ctx, "noapp")
+	environment := env("APP_ENV", "development")
+	logger, shutdownLogger, err := telemetry.NewLogger(ctx, environment)
 	if err != nil {
-		slog.Error("initialize telemetry", "error", err)
+		slog.Error("initialize OpenTelemetry logs", "error", err)
+		os.Exit(1)
+	}
+	slog.SetDefault(logger)
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = shutdownLogger(shutdownCtx)
+	}()
+
+	meterProvider, err := telemetry.NewMeterProvider(ctx, environment)
+	if err != nil {
+		slog.Error("initialize OpenTelemetry metrics", "error", err)
 		os.Exit(1)
 	}
 	defer func() {
-		_ = shutdownTelemetry(ctx)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = meterProvider.Shutdown(shutdownCtx)
 	}()
 
-	pool, err := pgxpool.New(ctx, databaseURL)
+	tracerProvider, err := telemetry.NewTracerProvider(ctx, environment)
+	if err != nil {
+		slog.Error("initialize OpenTelemetry traces", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = tracerProvider.Shutdown(shutdownCtx)
+	}()
+
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		slog.Error("parse database configuration", "error", err)
+		os.Exit(1)
+	}
+	poolConfig.ConnConfig.Tracer = otelpgx.NewTracer()
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		slog.Error("create database pool", "error", err)
 		os.Exit(1)
@@ -46,9 +77,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	handler, err := app.New(pool)
+	if err != nil {
+		slog.Error("initialize HTTP handler", "error", err)
+		os.Exit(1)
+	}
+
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           otelhttp.NewHandler(app.New(pool), "http.server"),
+		Handler:           otelhttp.NewHandler(handler, "HTTP request"),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
