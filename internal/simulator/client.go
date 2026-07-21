@@ -7,13 +7,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 type apiClient struct {
 	baseURL string
 	http    *http.Client
+	oauth   OAuthConfig
+	mu      sync.Mutex
+	token   string
+	expires time.Time
+}
+
+type OAuthConfig struct {
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
 }
 
 type apiUser struct {
@@ -31,10 +43,11 @@ type apiTask struct {
 	Status    string `json:"status"`
 }
 
-func newAPIClient(baseURL string) *apiClient {
+func newAPIClient(baseURL string, oauth OAuthConfig) *apiClient {
 	return &apiClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http:    &http.Client{Timeout: 5 * time.Second},
+		oauth:   oauth,
 	}
 }
 
@@ -93,6 +106,13 @@ func (c *apiClient) do(ctx context.Context, method, path string, body, result an
 	}
 	req.Header.Set("User-Agent", "noapp-traffic-simulator/1.0")
 	req.Header.Set("X-Traffic-Source", "simulator")
+	if path != "/api/health" && c.oauth.TokenURL != "" {
+		token, err := c.accessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("get API access token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	response, err := c.http.Do(req)
 	if err != nil {
@@ -109,4 +129,39 @@ func (c *apiClient) do(ctx context.Context, method, path string, body, result an
 		}
 	}
 	return nil
+}
+
+func (c *apiClient) accessToken(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token != "" && time.Until(c.expires) > 30*time.Second {
+		return c.token, nil
+	}
+	form := url.Values{"grant_type": {"client_credentials"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.oauth.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "noapp-traffic-simulator/1.0")
+	req.SetBasicAuth(c.oauth.ClientID, c.oauth.ClientSecret)
+	response, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	var tokenResponse struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
+		Error       string `json:"error_description"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&tokenResponse); err != nil {
+		return "", fmt.Errorf("decode token response: %w", err)
+	}
+	if response.StatusCode != http.StatusOK || tokenResponse.AccessToken == "" {
+		return "", fmt.Errorf("token endpoint returned %d: %s", response.StatusCode, tokenResponse.Error)
+	}
+	c.token = tokenResponse.AccessToken
+	c.expires = time.Now().Add(time.Duration(tokenResponse.ExpiresIn) * time.Second)
+	return c.token, nil
 }

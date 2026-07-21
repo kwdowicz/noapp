@@ -16,7 +16,11 @@ import (
 func main() {
 	addr := env("SIMULATOR_ADDR", ":8081")
 	target := env("TARGET_APP_URL", "http://localhost:8080")
-	engine := simulator.NewEngine(target)
+	engine := simulator.NewEngine(target, simulator.OAuthConfig{
+		TokenURL:     env("AUTH_TOKEN_URL", ""),
+		ClientID:     env("AUTH_CLIENT_ID", ""),
+		ClientSecret: env("AUTH_CLIENT_SECRET", ""),
+	})
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           simulator.NewHandler(engine),

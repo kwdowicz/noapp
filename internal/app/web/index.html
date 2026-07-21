@@ -12,7 +12,11 @@
       <p class="eyebrow">OBSERVABILITY SANDBOX</p>
       <h1>NoApp Project Board</h1>
     </div>
-    <button class="secondary" id="new-project-button">+ New project</button>
+    <div class="identity">
+      <span id="signed-in-user"></span>
+      <button class="secondary" id="logout-button">Sign out</button>
+      <button class="secondary" id="new-project-button">+ New project</button>
+    </div>
   </header>
 
   <main>
@@ -47,6 +51,6 @@
     </form>
   </dialog>
 
-  <script src="/app.js"></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

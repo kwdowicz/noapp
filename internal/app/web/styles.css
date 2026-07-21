@@ -13,6 +13,8 @@ button { border: 0; border-radius: 8px; padding: 10px 15px; background: #2563eb;
 button:hover { filter: brightness(.94); }
 button.secondary { background: #e9edf5; color: #25324b; }
 header button.secondary { background: #fff; }
+.identity { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+#signed-in-user { color: #d8e1f2; font-size: .86rem; }
 select, input, textarea { width: 100%; padding: 10px 11px; border: 1px solid #cad1de; border-radius: 8px; background: white; }
 .board { display: grid; grid-template-columns: repeat(3, minmax(240px, 1fr)); gap: 18px; align-items: start; }
 .column { min-height: 260px; padding: 14px; border-radius: 12px; background: #e8ecf3; }
@@ -32,4 +34,4 @@ dialog::backdrop { background: #17223b99; }
 dialog form { display: grid; gap: 16px; }
 dialog label { display: grid; gap: 6px; font-size: .86rem; font-weight: 700; }
 .actions { display: flex; justify-content: flex-end; gap: 9px; }
-@media (max-width: 800px) { .toolbar { grid-template-columns: 1fr; } .board { grid-template-columns: 1fr; } header { align-items: flex-start; gap: 16px; } }
+@media (max-width: 800px) { .toolbar { grid-template-columns: 1fr; } .board { grid-template-columns: 1fr; } header { align-items: flex-start; gap: 16px; } .identity { flex-wrap: wrap; } }

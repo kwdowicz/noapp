@@ -81,9 +81,9 @@ type Status struct {
 	Recent                 []Event        `json:"recent"`
 }
 
-func NewEngine(targetURL string) *Engine {
+func NewEngine(targetURL string, oauth OAuthConfig) *Engine {
 	return &Engine{
-		client: newAPIClient(targetURL),
+		client: newAPIClient(targetURL, oauth),
 		faker:  gofakeit.New(0),
 		phase:  "stopped",
 		speed:  1,

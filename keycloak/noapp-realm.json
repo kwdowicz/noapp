@@ -1,0 +1,169 @@
+{
+  "realm": "noapp",
+  "enabled": true,
+  "displayName": "NoApp",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "eventsEnabled": true,
+  "eventsListeners": ["jboss-logging"],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "noapp-viewer",
+        "description": "Read NoApp users, projects, and tasks"
+      },
+      {
+        "name": "noapp-editor",
+        "description": "Read and modify NoApp data",
+        "composite": true,
+        "composites": {
+          "realm": ["noapp-viewer"]
+        }
+      },
+      {
+        "name": "noapp-admin",
+        "description": "Administer NoApp and inherit editor access",
+        "composite": true,
+        "composites": {
+          "realm": ["noapp-editor"]
+        }
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "noapp-api",
+      "name": "NoApp API",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "noapp-web",
+      "name": "NoApp browser",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8080/*"],
+      "webOrigins": ["http://localhost:8080"],
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "noapp-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "noapp-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "noapp-simulator",
+      "name": "NoApp traffic simulator",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "noapp-simulator-dev-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "noapp-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "noapp-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "noapp-cli",
+      "name": "NoApp example API client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "noapp-cli-dev-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "noapp-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "noapp-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "email": "admin@example.test",
+      "firstName": "NoApp",
+      "lastName": "Administrator",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["noapp-admin"],
+      "credentials": [
+        {"type": "password", "value": "noapp", "temporary": false}
+      ]
+    },
+    {
+      "username": "viewer",
+      "email": "viewer@example.test",
+      "firstName": "NoApp",
+      "lastName": "Viewer",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["noapp-viewer"],
+      "credentials": [
+        {"type": "password", "value": "viewer", "temporary": false}
+      ]
+    },
+    {
+      "username": "editor",
+      "email": "editor@example.test",
+      "firstName": "NoApp",
+      "lastName": "Editor",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["noapp-editor"],
+      "credentials": [
+        {"type": "password", "value": "editor", "temporary": false}
+      ]
+    },
+    {
+      "username": "service-account-noapp-simulator",
+      "enabled": true,
+      "serviceAccountClientId": "noapp-simulator",
+      "realmRoles": ["noapp-editor"]
+    },
+    {
+      "username": "service-account-noapp-cli",
+      "enabled": true,
+      "serviceAccountClientId": "noapp-cli",
+      "realmRoles": ["noapp-editor"]
+    }
+  ]
+}

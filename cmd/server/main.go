@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"noapp/internal/app"
+	"noapp/internal/auth"
 	"noapp/internal/telemetry"
 
 	"github.com/exaring/otelpgx"
@@ -88,7 +89,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler, err := app.New(pool)
+	verifier, err := auth.NewVerifier(auth.Config{
+		Issuer:   env("AUTH_ISSUER_URL", "http://localhost:8082/realms/noapp"),
+		JWKSURL:  env("AUTH_JWKS_URL", "http://localhost:8082/realms/noapp/protocol/openid-connect/certs"),
+		Audience: env("AUTH_AUDIENCE", "noapp-api"),
+	})
+	if err != nil {
+		slog.Error("initialize token verifier", "error", err)
+		os.Exit(1)
+	}
+	handler, err := app.New(pool, verifier, app.AuthUIConfig{
+		Issuer:   env("AUTH_BROWSER_ISSUER_URL", "http://localhost:8082/realms/noapp"),
+		ClientID: env("AUTH_BROWSER_CLIENT_ID", "noapp-web"),
+	})
 	if err != nil {
 		slog.Error("initialize HTTP handler", "error", err)
 		os.Exit(1)

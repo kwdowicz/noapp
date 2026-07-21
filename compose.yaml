@@ -1,15 +1,19 @@
 services:
-  app:
+  noapp-1:
     build:
       context: .
     environment:
       APP_ADDR: ":8080"
       APP_ENV: "development"
       DATABASE_URL: "postgres://noapp:noapp@db:5432/noapp?sslmode=disable"
+      AUTH_ISSUER_URL: "http://localhost:8082/realms/noapp"
+      AUTH_JWKS_URL: "http://auth:8080/realms/noapp/protocol/openid-connect/certs"
+      AUTH_AUDIENCE: "noapp-api"
+      AUTH_BROWSER_ISSUER_URL: "http://localhost:8082/realms/noapp"
+      AUTH_BROWSER_CLIENT_ID: "noapp-web"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      OTEL_RESOURCE_ATTRIBUTES: "service.instance.id=noapp-1"
       PYROSCOPE_SERVER_ADDRESS: "http://pyroscope:4040"
-    ports:
-      - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -17,8 +21,63 @@ services:
         condition: service_started
       pyroscope:
         condition: service_started
+      auth:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/api/health | grep -q '\"status\":\"ok\"'"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/health | grep -q '\"status\":\"ok\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  noapp-2:
+    build:
+      context: .
+    environment:
+      APP_ADDR: ":8080"
+      APP_ENV: "development"
+      DATABASE_URL: "postgres://noapp:noapp@db:5432/noapp?sslmode=disable"
+      AUTH_ISSUER_URL: "http://localhost:8082/realms/noapp"
+      AUTH_JWKS_URL: "http://auth:8080/realms/noapp/protocol/openid-connect/certs"
+      AUTH_AUDIENCE: "noapp-api"
+      AUTH_BROWSER_ISSUER_URL: "http://localhost:8082/realms/noapp"
+      AUTH_BROWSER_CLIENT_ID: "noapp-web"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      OTEL_RESOURCE_ATTRIBUTES: "service.instance.id=noapp-2"
+      PYROSCOPE_SERVER_ADDRESS: "http://pyroscope:4040"
+    depends_on:
+      db:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      pyroscope:
+        condition: service_started
+      auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/health | grep -q '\"status\":\"ok\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  load-balancer:
+    image: nginx:1.29-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      noapp-1:
+        condition: service_healthy
+      noapp-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/health | grep -q '\"status\":\"ok\"'"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -32,17 +91,89 @@ services:
       dockerfile: Dockerfile.simulator
     environment:
       SIMULATOR_ADDR: ":8081"
-      TARGET_APP_URL: "http://app:8080"
+      TARGET_APP_URL: "http://load-balancer:8080"
+      AUTH_TOKEN_URL: "http://auth:8080/realms/noapp/protocol/openid-connect/token"
+      AUTH_CLIENT_ID: "noapp-simulator"
+      AUTH_CLIENT_SECRET: "noapp-simulator-dev-secret"
       APP_ENV: "development"
       PYROSCOPE_SERVER_ADDRESS: "http://pyroscope:4040"
     ports:
       - "8081:8081"
     depends_on:
-      app:
+      load-balancer:
+        condition: service_healthy
+      auth:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/api/health | grep -q '\"status\":\"ok\"'"]
       interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  auth:
+    image: quay.io/keycloak/keycloak:26.7.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "admin"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "noapp"
+      KC_DB: "postgres"
+      KC_DB_URL: "jdbc:postgresql://auth-db:5432/keycloak"
+      KC_DB_USERNAME: "keycloak"
+      KC_DB_PASSWORD: "keycloak"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: "http://localhost:8082"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_EVENT_METRICS_USER_ENABLED: "true"
+      KC_HTTP_METRICS_HISTOGRAMS_ENABLED: "true"
+      KC_HTTP_ACCESS_LOG_ENABLED: "true"
+      KC_LOG_CONSOLE_OUTPUT: "json"
+      KC_LOG_SERVICE_NAME: "noapp-auth"
+      KC_LOG_SERVICE_ENVIRONMENT: "development"
+      KC_FEATURES: "opentelemetry-logs,opentelemetry-metrics,user-event-metrics"
+      KC_TRACING_ENABLED: "true"
+      KC_TRACING_SAMPLER_TYPE: "always_on"
+      KC_TELEMETRY_ENDPOINT: "http://otel-collector:4318"
+      KC_TELEMETRY_PROTOCOL: "http/protobuf"
+      KC_TELEMETRY_SERVICE_NAME: "noapp-auth"
+      KC_TELEMETRY_RESOURCE_ATTRIBUTES: "deployment.environment.name=development,service.version=26.7.0"
+      KC_TELEMETRY_LOGS_ENABLED: "true"
+      KC_TELEMETRY_LOGS_LEVEL: "INFO"
+      KC_TELEMETRY_METRICS_ENABLED: "true"
+      KC_TELEMETRY_METRICS_INTERVAL: "5s"
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./keycloak/noapp-realm.json:/opt/keycloak/data/import/noapp-realm.json:ro
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "{ printf 'HEAD /health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep 'HTTP/1.0 200'; } 0<>/dev/tcp/127.0.0.1/9000"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 20s
+    networks:
+      - noapp-net
+    restart: unless-stopped
+
+  auth-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - auth-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 2s
       timeout: 3s
       retries: 20
     networks:
@@ -173,6 +304,8 @@ networks:
     driver: bridge
 
 volumes:
+  auth-data:
+    name: noapp-auth-data
   noapp-data:
     name: noapp-postgres-data
   loki-data:

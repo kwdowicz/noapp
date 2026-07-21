@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"noapp/internal/auth"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -34,6 +37,12 @@ type Server struct {
 type httpMetrics struct {
 	requestCount    metric.Int64Counter
 	requestDuration metric.Float64Histogram
+	authDecisions   metric.Int64Counter
+}
+
+type AuthUIConfig struct {
+	Issuer   string `json:"issuer"`
+	ClientID string `json:"client_id"`
 }
 
 type User struct {
@@ -63,7 +72,7 @@ type Task struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-func New(db *pgxpool.Pool) (http.Handler, error) {
+func New(db *pgxpool.Pool, verifier *auth.Verifier, authUI AuthUIConfig) (http.Handler, error) {
 	s := &Server{db: db}
 	meter := otel.Meter("noapp/http")
 	requestCount, err := meter.Int64Counter(
@@ -83,19 +92,78 @@ func New(db *pgxpool.Pool) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create request duration histogram: %w", err)
 	}
+	authDecisions, err := meter.Int64Counter(
+		"noapp.auth.decision.count",
+		metric.WithDescription("Number of API authorization decisions."),
+		metric.WithUnit("{decision}"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create authorization decision counter: %w", err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
-	mux.HandleFunc("GET /api/users", s.listUsers)
-	mux.HandleFunc("POST /api/users", s.createUser)
-	mux.HandleFunc("GET /api/projects", s.listProjects)
-	mux.HandleFunc("POST /api/projects", s.createProject)
-	mux.HandleFunc("GET /api/projects/{id}/tasks", s.listTasks)
-	mux.HandleFunc("POST /api/projects/{id}/tasks", s.createTask)
-	mux.HandleFunc("PATCH /api/tasks/{id}/status", s.updateTaskStatus)
+	mux.HandleFunc("GET /api/auth/config", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, authUI)
+	})
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /api/users", s.listUsers)
+	protected.HandleFunc("POST /api/users", s.createUser)
+	protected.HandleFunc("GET /api/projects", s.listProjects)
+	protected.HandleFunc("POST /api/projects", s.createProject)
+	protected.HandleFunc("GET /api/projects/{id}/tasks", s.listTasks)
+	protected.HandleFunc("POST /api/projects/{id}/tasks", s.createTask)
+	protected.HandleFunc("PATCH /api/tasks/{id}/status", s.updateTaskStatus)
+	mux.Handle("/api/", authorize(verifier, authDecisions, protected))
 
 	static, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(static)))
-	return requestLogger(mux, httpMetrics{requestCount: requestCount, requestDuration: requestDuration}), nil
+	return requestLogger(mux, httpMetrics{
+		requestCount: requestCount, requestDuration: requestDuration, authDecisions: authDecisions,
+	}), nil
+}
+
+type principalContextKey struct{}
+
+func authorize(verifier *auth.Verifier, decisions metric.Int64Counter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requiredRole := "noapp-viewer"
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			requiredRole = "noapp-editor"
+		}
+		principal, err := verifier.Verify(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="noapp"`)
+			recordAuthDecision(r, decisions, "unauthenticated", requiredRole, "")
+			writeError(w, r, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if !principal.HasRole(requiredRole) {
+			recordAuthDecision(r, decisions, "forbidden", requiredRole, principal.Subject)
+			writeError(w, r, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+		recordAuthDecision(r, decisions, "allowed", requiredRole, principal.Subject)
+		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func recordAuthDecision(r *http.Request, decisions metric.Int64Counter, outcome, requiredRole, subject string) {
+	attrs := []attribute.KeyValue{
+		attribute.String("auth.outcome", outcome),
+		attribute.String("auth.required_role", requiredRole),
+	}
+	decisions.Add(r.Context(), 1, metric.WithAttributes(attrs...))
+	span := trace.SpanFromContext(r.Context())
+	span.SetAttributes(attrs...)
+	if subject != "" {
+		span.SetAttributes(attribute.String("enduser.id", subject))
+	}
+	slog.InfoContext(r.Context(), "API authorization decision",
+		"auth.outcome", outcome,
+		"auth.required_role", requiredRole,
+		"enduser.id", subject,
+	)
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
