@@ -100,7 +100,7 @@ func New(db *pgxpool.Pool) (http.Handler, error) {
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.Ping(r.Context()); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "database is unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "database is unavailable", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "health check completed", "database.status", "ok")
@@ -110,7 +110,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `SELECT id, name, email, created_at FROM users ORDER BY name`)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load users")
+		writeError(w, r, http.StatusInternalServerError, "could not load users", "error", err)
 		return
 	}
 	defer rows.Close()
@@ -119,13 +119,13 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var user User
 		if err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.CreatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not read users")
+			writeError(w, r, http.StatusInternalServerError, "could not read users", "error", err)
 			return
 		}
 		users = append(users, user)
 	}
 	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not finish loading users")
+		writeError(w, r, http.StatusInternalServerError, "could not finish loading users", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "users listed", "users.count", len(users))
@@ -143,7 +143,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	if input.Name == "" || input.Email == "" || !strings.Contains(input.Email, "@") {
-		writeError(w, http.StatusBadRequest, "name and a valid email are required")
+		writeError(w, r, http.StatusBadRequest, "name and a valid email are required")
 		return
 	}
 
@@ -154,10 +154,10 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		Scan(&user.ID, &user.Name, &user.Email, &user.CreatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "users_email_key") {
-			writeError(w, http.StatusConflict, "a user with that email already exists")
+			writeError(w, r, http.StatusConflict, "a user with that email already exists", "error", err)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not create user")
+		writeError(w, r, http.StatusInternalServerError, "could not create user", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "user created", "user.id", user.ID)
@@ -170,7 +170,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		FROM projects p LEFT JOIN tasks t ON t.project_id = p.id
 		GROUP BY p.id ORDER BY p.created_at DESC`)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load projects")
+		writeError(w, r, http.StatusInternalServerError, "could not load projects", "error", err)
 		return
 	}
 	defer rows.Close()
@@ -179,13 +179,13 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var project Project
 		if err := rows.Scan(&project.ID, &project.Name, &project.Description, &project.CreatedAt, &project.TaskCount); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not read projects")
+			writeError(w, r, http.StatusInternalServerError, "could not read projects", "error", err)
 			return
 		}
 		projects = append(projects, project)
 	}
 	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not finish loading projects")
+		writeError(w, r, http.StatusInternalServerError, "could not finish loading projects", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "projects listed", "projects.count", len(projects))
@@ -203,7 +203,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	if input.Name == "" {
-		writeError(w, http.StatusBadRequest, "project name is required")
+		writeError(w, r, http.StatusBadRequest, "project name is required")
 		return
 	}
 
@@ -213,7 +213,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		RETURNING id, name, description, created_at`, input.Name, input.Description).
 		Scan(&project.ID, &project.Name, &project.Description, &project.CreatedAt)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create project")
+		writeError(w, r, http.StatusInternalServerError, "could not create project", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "project created", "project.id", project.ID)
@@ -231,7 +231,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id
 		WHERE t.project_id = $1 ORDER BY t.created_at`, projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load tasks")
+		writeError(w, r, http.StatusInternalServerError, "could not load tasks", "error", err)
 		return
 	}
 	defer rows.Close()
@@ -240,13 +240,13 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		task, err := scanTask(rows)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not read tasks")
+			writeError(w, r, http.StatusInternalServerError, "could not read tasks", "error", err)
 			return
 		}
 		tasks = append(tasks, task)
 	}
 	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not finish loading tasks")
+		writeError(w, r, http.StatusInternalServerError, "could not finish loading tasks", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "project tasks listed", "project.id", projectID, "tasks.count", len(tasks))
@@ -273,7 +273,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		input.Status = "todo"
 	}
 	if input.Title == "" || !validStatus(input.Status) {
-		writeError(w, http.StatusBadRequest, "title is required and status must be todo, in_progress, or done")
+		writeError(w, r, http.StatusBadRequest, "title is required and status must be todo, in_progress, or done")
 		return
 	}
 
@@ -290,10 +290,10 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	task, err := scanTask(row)
 	if err != nil {
 		if isReferenceError(err) {
-			writeError(w, http.StatusBadRequest, "project or assignee does not exist")
+			writeError(w, r, http.StatusBadRequest, "project or assignee does not exist", "error", err)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not create task")
+		writeError(w, r, http.StatusInternalServerError, "could not create task", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "task created", "task.id", task.ID, "project.id", task.ProjectID, "task.status", task.Status)
@@ -312,7 +312,7 @@ func (s *Server) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validStatus(input.Status) {
-		writeError(w, http.StatusBadRequest, "status must be todo, in_progress, or done")
+		writeError(w, r, http.StatusBadRequest, "status must be todo, in_progress, or done")
 		return
 	}
 
@@ -325,11 +325,11 @@ func (s *Server) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		FROM updated u LEFT JOIN users a ON a.id = u.assignee_id`, input.Status, taskID)
 	task, err := scanTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeError(w, r, http.StatusNotFound, "task not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update task")
+		writeError(w, r, http.StatusInternalServerError, "could not update task", "error", err)
 		return
 	}
 	slog.InfoContext(r.Context(), "task status changed", "task.id", task.ID, "project.id", task.ProjectID, "task.status", task.Status)
@@ -435,7 +435,11 @@ func scanTask(row scanner) (Task, error) {
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id < 1 {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		if err != nil {
+			writeError(w, r, http.StatusBadRequest, "invalid id", "error", err)
+		} else {
+			writeError(w, r, http.StatusBadRequest, "invalid id")
+		}
 		return 0, false
 	}
 	return id, true
@@ -454,7 +458,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err), "error", err)
 		return false
 	}
 	return true
@@ -466,6 +470,12 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
+func writeError(w http.ResponseWriter, r *http.Request, status int, message string, args ...any) {
+	level := slog.LevelWarn
+	if status >= http.StatusInternalServerError {
+		level = slog.LevelError
+	}
+	args = append(args, "http.response.status_code", status)
+	slog.Log(r.Context(), level, message, args...)
 	writeJSON(w, status, map[string]string{"error": message})
 }
