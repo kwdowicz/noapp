@@ -24,7 +24,8 @@ Go application replicas ---- PostgreSQL <---- Outbox relay
 OpenTelemetry Collector ---- native OTLP/HTTP ----> Loki ---- queries ----> Grafana
           |
           |---- Prometheus endpoint ----> Prometheus ---- queries ----> Grafana
-          `---- OTLP/gRPC traces ----> Tempo ---- queries ----> Grafana
+          |---- OTLP/gRPC traces ----> Tempo ---- queries ----> Grafana
+          `---- OTLP/HTTP logs, metrics, traces ----> SigNoz ingester ----> ClickHouse ----> SigNoz UI (:3301)
 
 Traffic Simulator UI (:8081) ---- client credentials ----> Keycloak
           `---- synthetic user activity + bearer token ----> NGINX load balancer (:8080)
@@ -74,6 +75,7 @@ The Compose topology intentionally runs one realtime gateway. Multiple gateways 
 |-- keycloak/noapp-realm.json   # Seeded OIDC clients, roles, and development users
 |-- prometheus/prometheus.yaml  # Collector scrape configuration
 |-- tempo/tempo.yaml            # Single-binary Tempo with local trace storage
+|-- signoz/                     # Foundry-derived SigNoz ingester, ClickHouse, and Keeper configuration
 |-- grafana/dashboards/performance-profiles.json # Performance and flame graphs
 |-- grafana/provisioning/       # Automatically provisioned data sources
 |-- Dockerfile                  # Multi-stage Go image build
@@ -85,7 +87,7 @@ The Compose topology intentionally runs one realtime gateway. Multiple gateways 
 
 ## Run with Docker Desktop
 
-Requirements: Docker Desktop with Docker Compose. No local Go or PostgreSQL installation is required.
+Requirements: Docker Desktop with Docker Compose and at least 4 GB assigned to Docker. No local Go or PostgreSQL installation is required.
 
 ```powershell
 cd C:\Users\kwdow\dev\obs\noapp
@@ -96,6 +98,32 @@ docker compose ps
 Keycloak and Kafka take longer than the Go services on their first startup. Wait until `auth`, `kafka`, `outbox-relay`, `realtime`, `noapp-1`, `noapp-2`, and `load-balancer` are healthy in `docker compose ps`. The one-shot `migrate` and `kafka-init` services should show `Exited (0)`.
 
 Open <http://localhost:8080>. The browser redirects to Keycloak for login, then returns with an authorization-code flow protected by PKCE. This address is served by NGINX, which balances each API request between `noapp-1` and `noapp-2`.
+
+## SigNoz experiment
+
+SigNoz is available at <http://localhost:3301>. Complete its local first-user wizard on the first visit. NoApp telemetry is already ingested before that wizard is completed, so the services should appear as soon as the organization is ready.
+
+The SigNoz portion of this Compose file is derived from the official Foundry `v0.2.16` Docker Compose output. It adds a SigNoz server, ingestion collector, PostgreSQL metastore, ClickHouse telemetry store, ClickHouse Keeper, schema migrator, and a one-shot ClickHouse histogram-function installer. Their data uses isolated `noapp-signoz-*` named volumes. Port `3301` is used instead of SigNoz's default host port `8080` because NoApp already owns `8080`.
+
+The existing `otel-collector` remains the single endpoint used by NoApp and Keycloak. It dual-exports every log, metric, and trace batch: the existing Loki/Prometheus/Tempo path continues unchanged, while an OTLP/HTTP exporter sends a copy to `signoz-ingester`. The exporter has an in-memory queue with unlimited retry duration, so a temporary SigNoz outage does not stop the existing Grafana pipeline. This is intentionally a best-effort development queue; it is lost if the collector container restarts.
+
+The SigNoz ingester uses the generated static collector configuration rather than OpAMP management. Before a first SigNoz organization exists, OpAMP replaces ingestion pipelines with no-op pipelines; static mode keeps OTLP ingestion available during onboarding. The checked-in JWT secret and all database passwords are development-only values.
+
+Useful checks:
+
+```powershell
+# All long-running SigNoz services should be Up; both one-shot jobs should be Exited (0)
+docker compose ps -a signoz-ingester signoz-signoz-0 signoz-metastore-postgres-0 signoz-telemetrykeeper-clickhousekeeper-0 signoz-telemetrystore-clickhouse-0-0 signoz-telemetrystore-migrator signoz-telemetrystore-clickhouse-user-scripts
+
+# API and detailed component logs
+curl.exe http://localhost:3301/api/v1/health
+docker compose logs -f signoz-ingester signoz-signoz-0 signoz-telemetrystore-clickhouse-0-0 signoz-telemetrykeeper-clickhousekeeper-0
+
+# Confirm the current collector's SigNoz exporter is not retrying or dropping data
+docker compose logs --since=5m otel-collector | Select-String -Pattern 'otlp_http/signoz|dropped'
+```
+
+SigNoz's official documentation warns that ClickHouse Keeper can exit with code 139 under Docker Desktop on Windows. It is healthy on the Docker Desktop/WSL2 setup used for this experiment, but check `docker compose ps -a` and the Keeper logs first if the UI stops receiving data.
 
 ## Authentication and authorization
 

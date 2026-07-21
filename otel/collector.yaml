@@ -16,6 +16,18 @@ exporters:
       insecure: true
   otlp_http/loki:
     endpoint: http://loki:3100/otlp
+  otlp_http/signoz:
+    endpoint: http://signoz-ingester:4318
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 0s
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 2048
   prometheus:
     endpoint: 0.0.0.0:8889
     resource_to_telemetry_conversion:
@@ -26,12 +38,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug, otlp/tempo]
+      exporters: [debug, otlp/tempo, otlp_http/signoz]
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug, otlp_http/loki]
+      exporters: [debug, otlp_http/loki, otlp_http/signoz]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus]
+      exporters: [prometheus, otlp_http/signoz]
