@@ -1,0 +1,92 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Committed database events that have not yet been acknowledged by Kafka.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 100 }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "max(noapp_outbox_pending)", "instant": true, "legendFormat": "pending", "range": false, "refId": "A" }],
+      "title": "Outbox pending",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Browsers with an authenticated WebSocket connected to the realtime gateway.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "sum(noapp_realtime_connections_active)", "instant": true, "legendFormat": "connections", "range": false, "refId": "A" }],
+      "title": "Active realtime connections",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "P95 time from the task database transaction to WebSocket fanout.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "decimals": 3, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 1 }] }, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(noapp_realtime_event_end_to_end_duration_seconds_bucket[$__rate_interval])))", "instant": true, "legendFormat": "P95", "range": false, "refId": "A" }],
+      "title": "End-to-end event latency",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Events abandoned after exhausting relay retries.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "sum(noapp_outbox_events_dead_total) or vector(0)", "instant": true, "legendFormat": "dead", "range": false, "refId": "A" }],
+      "title": "Dead-lettered events",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Throughput at each stage of the realtime pipeline.",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 4, "showPoints": "never", "spanNulls": false }, "min": 0, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 7 },
+      "id": 5,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(rate(noapp_outbox_events_published_total[$__rate_interval]))", "legendFormat": "Kafka published", "range": true, "refId": "A" },
+        { "editorMode": "code", "expr": "sum(rate(noapp_realtime_events_consumed_total[$__rate_interval]))", "legendFormat": "Kafka consumed", "range": true, "refId": "B" },
+        { "editorMode": "code", "expr": "sum(rate(noapp_realtime_event_deliveries_total[$__rate_interval]))", "legendFormat": "WebSocket deliveries", "range": true, "refId": "C" }
+      ],
+      "title": "Event pipeline throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Relay failures and clients dropped because their send buffers could not keep up.",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 35, "lineWidth": 1, "pointSize": 4, "showPoints": "never", "spanNulls": false }, "min": 0, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 7 },
+      "id": 6,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(rate(noapp_outbox_publish_failures_total[$__rate_interval]))", "legendFormat": "Publish failures", "range": true, "refId": "A" },
+        { "editorMode": "code", "expr": "sum(rate(noapp_realtime_clients_dropped_total[$__rate_interval]))", "legendFormat": "Slow clients dropped", "range": true, "refId": "B" }
+      ],
+      "title": "Realtime delivery failures",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 42,
+  "tags": ["noapp", "realtime", "kafka", "outbox"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "NoApp Realtime Delivery",
+  "uid": "noapp-realtime-delivery",
+  "version": 1
+}

@@ -8,17 +8,18 @@ NoApp is a deliberately small project-tracking application built for observabili
 Browser
    |---- OIDC authorization code + PKCE ----> Keycloak (:8082) ----> auth-db
    |                                               |
-   | HTTP :8080 + bearer token                     | OTLP logs, metrics, traces
+   | HTTP + WebSocket :8080                        | OTLP logs, metrics, traces
    v                                               v
 NGINX load balancer (round robin)
-   |                         |
-   v                         v
-Go application          Go application ---- OTLP/HTTP logs, metrics, traces ----> OpenTelemetry Collector
-(noapp-1)               (noapp-2)
-   |
-   | PostgreSQL protocol
-   v
-PostgreSQL 17 (db container + persistent named volume)
+   |                         | WebSocket upgrade
+   |                         v
+   |                  Realtime gateway <---- Kafka board-events topic
+   |                                             ^
+   v                                             | at-least-once publish
+Go application replicas ---- PostgreSQL <---- Outbox relay
+                             |       |
+                             |       `---- task change + outbox event in one transaction
+                             `---- persistent named volume
 
 OpenTelemetry Collector ---- native OTLP/HTTP ----> Loki ---- queries ----> Grafana
           |
@@ -28,21 +29,34 @@ OpenTelemetry Collector ---- native OTLP/HTTP ----> Loki ---- queries ----> Graf
 Traffic Simulator UI (:8081) ---- client credentials ----> Keycloak
           `---- synthetic user activity + bearer token ----> NGINX load balancer (:8080)
 
-Two Go application instances + simulator ---- CPU/memory/runtime profiles ----> Pyroscope ---- queries ----> Grafana
+All Go services ---- OTLP logs, metrics, traces + runtime profiles ----> Collector / Pyroscope ----> Grafana
 ```
 
 Keycloak is the dedicated identity and access-management service. It owns login users, credentials, browser sessions, clients, roles, and token issuance in its own PostgreSQL database. The browser uses the OIDC authorization-code flow with PKCE; the simulator and example CLI use OAuth 2.0 client credentials. NoApp validates Keycloak's signed JWT access tokens locally and enforces realm roles at the API boundary. NGINX distributes authorized requests across two identical NoApp instances with round-robin balancing; both instances share the application PostgreSQL database and are private to the Compose network.
 
 The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. Incoming requests create server spans, and each PostgreSQL operation creates a child database span. W3C Trace Context and baggage are accepted from callers. Logs written with the request context carry the active trace and span IDs, which provides trace-to-log correlation. Keycloak exports its logs, metrics, and traces over OTLP as `service.name=noapp-auth`; HTTP access logging plus login and admin events are enabled. The Collector sends traces to Tempo, logs to Loki, and metrics to Prometheus. The two app instances and simulator continuously push runtime profiles to Pyroscope. Grafana starts with all data sources provisioned. Docker Compose creates an explicit bridge network named `noapp-network`; only the application load balancer, simulator UI, Keycloak UI, Prometheus, and Grafana are published to the host.
 
+## Realtime board updates
+
+Creating a task or changing its status writes both the task and a versioned event to PostgreSQL in one transaction. The outbox relay leases committed events, publishes them to the `noapp.board-events.v1` Kafka topic, and marks them published only after Kafka acknowledges the record. A relay crash after publication but before acknowledgement can produce a duplicate; `event_id` and monotonically increasing task versions make delivery idempotent. Failed events use exponential backoff and enter a retained dead-letter state after 20 attempts.
+
+The realtime service consumes Kafka with manual offset commits and broadcasts each event only to WebSocket clients subscribed to its project. A browser authenticates its socket with the same Keycloak access token used by REST, reconnects with exponential backoff, and reloads the selected board after reconnect to close any delivery gap. During a healthy connection it updates only the affected board columns. NGINX keeps upgraded connections open and continues to round-robin ordinary REST traffic across the two API replicas.
+
+The Compose topology intentionally runs one realtime gateway. Multiple gateways must not share this Kafka consumer group without a broadcast backplane: Kafka would deliver an event to one gateway while clients attached to another would miss it. A production horizontal-scaling step would place Redis Pub/Sub or NATS between a single logical Kafka dispatcher group and all WebSocket gateways.
+
 ## Directory structure
 
 ```text
 .
 |-- cmd/server/main.go          # Process startup and graceful shutdown
+|-- cmd/outbox-relay/main.go    # PostgreSQL outbox to Kafka publisher
+|-- cmd/realtime/main.go        # Kafka consumer and WebSocket server
 |-- cmd/simulator/main.go       # Traffic simulator process
 |-- internal/app/server.go      # HTTP routes, validation, and SQL access
 |-- internal/auth/verifier.go   # JWT/JWKS validation and token claims
+|-- internal/events/            # Versioned task event contract
+|-- internal/outbox/            # Leasing, retry, publication, and dead-letter logic
+|-- internal/realtime/          # Authenticated project subscription hub
 |-- internal/telemetry/logs.go  # OpenTelemetry Logs SDK and slog bridge
 |-- internal/telemetry/metrics.go # OpenTelemetry Metrics SDK and OTLP exporter
 |-- internal/telemetry/traces.go  # OpenTelemetry Traces SDK, sampler, and propagation
@@ -52,7 +66,8 @@ The Go binary uses the standard HTTP server and embeds the static UI into the ex
 |   |-- index.html
 |   |-- app.js
 |   `-- styles.css
-|-- db/init.sql                 # Schema, indexes, and starter data
+|-- db/init.sql                 # Fresh-database schema, indexes, and starter data
+|-- db/migrations/              # Idempotent upgrades for persisted volumes
 |-- otel/collector.yaml         # OTLP logs, metrics, and debug-only traces pipelines
 |-- loki/config.yaml            # Local filesystem log storage
 |-- nginx/nginx.conf            # Round-robin upstream and reverse proxy
@@ -78,7 +93,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Keycloak takes longer than the Go services on its first startup. Wait until `auth`, `noapp-1`, `noapp-2`, and `load-balancer` are healthy in `docker compose ps`.
+Keycloak and Kafka take longer than the Go services on their first startup. Wait until `auth`, `kafka`, `outbox-relay`, `realtime`, `noapp-1`, `noapp-2`, and `load-balancer` are healthy in `docker compose ps`. The one-shot `migrate` and `kafka-init` services should show `Exited (0)`.
 
 Open <http://localhost:8080>. The browser redirects to Keycloak for login, then returns with an authorization-code flow protected by PKCE. This address is served by NGINX, which balances each API request between `noapp-1` and `noapp-2`.
 
@@ -262,6 +277,7 @@ All request and response bodies use JSON. Errors have the form `{ "error": "mess
 | `GET` | `/api/projects/{id}/tasks` | Viewer | List a project's tasks |
 | `POST` | `/api/projects/{id}/tasks` | Editor | Create a task |
 | `PATCH` | `/api/tasks/{id}/status` | Editor | Change task status |
+| WebSocket | `/api/realtime` | Viewer token in first socket message | Subscribe to live project events |
 
 Task status values are `todo`, `in_progress`, and `done`.
 
@@ -285,16 +301,17 @@ Invoke-RestMethod -Method Patch -Uri "http://localhost:8080/api/tasks/$($task.id
 
 - The application PostgreSQL database stores assignees, projects, and tasks with foreign keys and database-level status checks.
 - Keycloak uses the separate `auth-db` PostgreSQL service and `noapp-auth-data` volume. Login identities never live in the application database.
-- `db/init.sql` runs automatically only when the named volume is first created.
+- `db/init.sql` runs automatically only when the named volume is first created. The one-shot `migrate` service applies idempotent realtime schema changes to both new and existing volumes.
 - Data persists in the `noapp-postgres-data` named volume across normal restarts.
 - The app connects as the Compose-only `noapp` user through the private network. The example credentials are intentionally development-only.
-- To apply schema edits to an existing development database, either run the SQL manually or recreate the volume with `docker compose down -v` followed by `docker compose up --build -d`.
+- The outbox retains published rows for diagnosis. Unpublished rows are retried; rows that exhaust retries retain `last_error` and `dead_at` for operator inspection.
 
 Inspect the database:
 
 ```powershell
 docker compose exec db psql -U noapp -d noapp
 docker compose exec db psql -U noapp -d noapp -c "SELECT id, name FROM projects;"
+docker compose exec db psql -U noapp -d noapp -c "SELECT sequence, event_type, published_at, attempt_count, last_error, dead_at FROM outbox_events ORDER BY sequence DESC LIMIT 20;"
 docker compose exec auth-db psql -U keycloak -d keycloak
 ```
 
@@ -312,7 +329,11 @@ docker compose up --build -d
 
 # Run Go checks locally (Go 1.25+)
 go test ./...
+go test -race ./...
 go vet ./...
+
+# Exercise authenticated WebSocket delivery and restore the changed task
+node .\scripts\realtime-smoke.mjs
 
 # Format Go code
 gofmt -w .\cmd .\internal
@@ -325,4 +346,4 @@ docker compose ps
 docker network inspect noapp-network
 ```
 
-OpenTelemetry logs, metrics, HTTP server spans, PostgreSQL child spans, propagation, trace/log correlation, Pyroscope runtime profiles, and trace/profile correlation form the current instrumentation layer. The Go traces and metrics signals are stable; the Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades.
+OpenTelemetry logs, metrics, HTTP server spans, PostgreSQL child spans, Kafka producer/consumer spans, propagation through outbox payloads and Kafka headers, trace/log correlation, Pyroscope runtime profiles, and trace/profile correlation form the current instrumentation layer. Realtime metrics include active connections, authentication outcomes, consumed events, deliveries, dropped slow clients, and end-to-end event latency. Relay metrics include pending events, published events, failures, dead-lettered events, and publication duration. The Go traces and metrics signals are stable; the Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades.

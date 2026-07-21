@@ -16,6 +16,10 @@ import (
 // NewLogger creates a slog logger that writes human-readable records to stdout
 // and exports the same records through the OpenTelemetry Logs SDK.
 func NewLogger(ctx context.Context, environment string) (*slog.Logger, func(context.Context) error, error) {
+	return NewLoggerFor(ctx, environment, "noapp")
+}
+
+func NewLoggerFor(ctx context.Context, environment, serviceName string) (*slog.Logger, func(context.Context) error, error) {
 	exporter, err := otlploghttp.New(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -25,7 +29,7 @@ func NewLogger(ctx context.Context, environment string) (*slog.Logger, func(cont
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
 		resource.WithAttributes(
-			semconv.ServiceName("noapp"),
+			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion("1.0.0"),
 			attribute.String("deployment.environment.name", environment),
 		),
@@ -39,7 +43,7 @@ func NewLogger(ctx context.Context, environment string) (*slog.Logger, func(cont
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
 	)
 	console := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-	otel := otelslog.NewHandler("noapp", otelslog.WithLoggerProvider(provider))
+	otel := otelslog.NewHandler(serviceName, otelslog.WithLoggerProvider(provider))
 	return slog.New(multiHandler{handlers: []slog.Handler{console, otel}}), provider.Shutdown, nil
 }
 

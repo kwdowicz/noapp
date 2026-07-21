@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"noapp/internal/auth"
+	"noapp/internal/events"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,17 +61,7 @@ type Project struct {
 	TaskCount   int64     `json:"task_count"`
 }
 
-type Task struct {
-	ID           int64     `json:"id"`
-	ProjectID    int64     `json:"project_id"`
-	AssigneeID   *int64    `json:"assignee_id,omitempty"`
-	AssigneeName string    `json:"assignee_name,omitempty"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}
+type Task = events.Task
 
 func New(db *pgxpool.Pool, verifier *auth.Verifier, authUI AuthUIConfig) (http.Handler, error) {
 	s := &Server{db: db}
@@ -295,7 +286,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.Query(r.Context(), `
 		SELECT t.id, t.project_id, t.assignee_id, coalesce(u.name, ''), t.title,
-		       t.description, t.status, t.created_at, t.updated_at
+		       t.description, t.status, t.version, t.created_at, t.updated_at
 		FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id
 		WHERE t.project_id = $1 ORDER BY t.created_at`, projectID)
 	if err != nil {
@@ -345,14 +336,21 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := s.db.QueryRow(r.Context(), `
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not begin task creation", "error", err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	row := tx.QueryRow(r.Context(), `
 		WITH inserted AS (
 			INSERT INTO tasks (project_id, assignee_id, title, description, status)
 			VALUES ($1, $2, $3, $4, $5)
 			RETURNING *
 		)
 		SELECT i.id, i.project_id, i.assignee_id, coalesce(u.name, ''), i.title,
-		       i.description, i.status, i.created_at, i.updated_at
+		       i.description, i.status, i.version, i.created_at, i.updated_at
 		FROM inserted i LEFT JOIN users u ON u.id = i.assignee_id`,
 		projectID, input.AssigneeID, input.Title, input.Description, input.Status)
 	task, err := scanTask(row)
@@ -364,7 +362,17 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "could not create task", "error", err)
 		return
 	}
-	slog.InfoContext(r.Context(), "task created", "task.id", task.ID, "project.id", task.ProjectID, "task.status", task.Status)
+	event := events.NewTaskEvent(r.Context(), events.TaskCreated, principalSubject(r.Context()), task)
+	if err := events.InsertOutbox(r.Context(), tx, event); err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not record task event", "error", err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not commit task creation", "error", err)
+		return
+	}
+	slog.InfoContext(r.Context(), "task created", "task.id", task.ID, "project.id", task.ProjectID,
+		"task.status", task.Status, "task.version", task.Version, "event.id", event.EventID)
 	writeJSON(w, http.StatusCreated, task)
 }
 
@@ -384,12 +392,21 @@ func (s *Server) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := s.db.QueryRow(r.Context(), `
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not begin task status change", "error", err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	row := tx.QueryRow(r.Context(), `
 		WITH updated AS (
-			UPDATE tasks SET status = $1, updated_at = now() WHERE id = $2 RETURNING *
+			UPDATE tasks
+			SET status = $1, version = version + 1, updated_at = now()
+			WHERE id = $2 RETURNING *
 		)
 		SELECT u.id, u.project_id, u.assignee_id, coalesce(a.name, ''), u.title,
-		       u.description, u.status, u.created_at, u.updated_at
+		       u.description, u.status, u.version, u.created_at, u.updated_at
 		FROM updated u LEFT JOIN users a ON a.id = u.assignee_id`, input.Status, taskID)
 	task, err := scanTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -400,7 +417,17 @@ func (s *Server) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "could not update task", "error", err)
 		return
 	}
-	slog.InfoContext(r.Context(), "task status changed", "task.id", task.ID, "project.id", task.ProjectID, "task.status", task.Status)
+	event := events.NewTaskEvent(r.Context(), events.TaskStatusChanged, principalSubject(r.Context()), task)
+	if err := events.InsertOutbox(r.Context(), tx, event); err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not record task event", "error", err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not commit task status change", "error", err)
+		return
+	}
+	slog.InfoContext(r.Context(), "task status changed", "task.id", task.ID, "project.id", task.ProjectID,
+		"task.status", task.Status, "task.version", task.Version, "event.id", event.EventID)
 	writeJSON(w, http.StatusOK, task)
 }
 
@@ -493,11 +520,16 @@ func scanTask(row scanner) (Task, error) {
 	var task Task
 	var assigneeID pgtype.Int8
 	err := row.Scan(&task.ID, &task.ProjectID, &assigneeID, &task.AssigneeName, &task.Title,
-		&task.Description, &task.Status, &task.CreatedAt, &task.UpdatedAt)
+		&task.Description, &task.Status, &task.Version, &task.CreatedAt, &task.UpdatedAt)
 	if assigneeID.Valid {
 		task.AssigneeID = &assigneeID.Int64
 	}
 	return task, err
+}
+
+func principalSubject(ctx context.Context) string {
+	principal, _ := ctx.Value(principalContextKey{}).(auth.Principal)
+	return principal.Subject
 }
 
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {

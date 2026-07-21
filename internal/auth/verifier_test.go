@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,7 +49,7 @@ func TestVerifier(t *testing.T) {
 
 	for name, authorization := range map[string]string{
 		"missing":  "",
-		"tampered": "Bearer " + valid[:len(valid)-1] + "x",
+		"tampered": "Bearer " + tamperSignature(t, valid),
 		"expired": "Bearer " + signTestToken(t, key, map[string]any{
 			"iss": "https://issuer.test", "sub": "subject-1", "aud": "noapp-api", "exp": time.Now().Add(-time.Minute).Unix(),
 		}),
@@ -62,6 +63,21 @@ func TestVerifier(t *testing.T) {
 			}
 		})
 	}
+}
+
+func tamperSignature(t *testing.T, token string) string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatal("test token is malformed")
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature[0] ^= 0xff
+	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
+	return strings.Join(parts, ".")
 }
 
 func signTestToken(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string {

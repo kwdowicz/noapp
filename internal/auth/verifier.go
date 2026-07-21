@@ -28,9 +28,10 @@ type Config struct {
 }
 
 type Principal struct {
-	Subject  string
-	Username string
-	Roles    []string
+	Subject   string
+	Username  string
+	Roles     []string
+	ExpiresAt time.Time
 }
 
 func (p Principal) HasRole(role string) bool {
@@ -113,9 +114,10 @@ func (v *Verifier) Verify(ctx context.Context, authorization string) (Principal,
 		return Principal{}, ErrInvalidToken
 	}
 	return Principal{
-		Subject:  claims.Subject,
-		Username: claims.PreferredUsername,
-		Roles:    append([]string(nil), claims.RealmAccess.Roles...),
+		Subject:   claims.Subject,
+		Username:  claims.PreferredUsername,
+		Roles:     append([]string(nil), claims.RealmAccess.Roles...),
+		ExpiresAt: time.Unix(claims.ExpiresAt, 0),
 	}, nil
 }
 

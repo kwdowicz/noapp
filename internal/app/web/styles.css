@@ -15,13 +15,17 @@ button.secondary { background: #e9edf5; color: #25324b; }
 header button.secondary { background: #fff; }
 .identity { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 #signed-in-user { color: #d8e1f2; font-size: .86rem; }
+.realtime-status { display: inline-flex; align-items: center; gap: 6px; color: #d8e1f2; font-size: .78rem; }
+.realtime-status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; }
+.realtime-status[data-state="connected"]::before { background: #4ade80; box-shadow: 0 0 0 3px #4ade8030; }
+.realtime-status[data-state="disconnected"]::before { background: #f87171; }
 select, input, textarea { width: 100%; padding: 10px 11px; border: 1px solid #cad1de; border-radius: 8px; background: white; }
 .board { display: grid; grid-template-columns: repeat(3, minmax(240px, 1fr)); gap: 18px; align-items: start; }
 .column { min-height: 260px; padding: 14px; border-radius: 12px; background: #e8ecf3; }
 .column h2 { display: flex; justify-content: space-between; font-size: .9rem; letter-spacing: .04em; text-transform: uppercase; }
 .count { color: #6d7789; }
 .cards { display: grid; gap: 11px; }
-.card { padding: 16px; border-radius: 9px; background: white; box-shadow: 0 2px 8px #27334d14; }
+.card { padding: 16px; border-radius: 9px; background: white; box-shadow: 0 2px 8px #27334d14; animation: card-arrive .18s ease-out; }
 .card h3 { margin: 0 0 8px; font-size: 1rem; }
 .card p { color: #687286; font-size: .88rem; white-space: pre-wrap; }
 .card footer { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
@@ -34,4 +38,5 @@ dialog::backdrop { background: #17223b99; }
 dialog form { display: grid; gap: 16px; }
 dialog label { display: grid; gap: 6px; font-size: .86rem; font-weight: 700; }
 .actions { display: flex; justify-content: flex-end; gap: 9px; }
+@keyframes card-arrive { from { opacity: .65; transform: translateY(3px); } }
 @media (max-width: 800px) { .toolbar { grid-template-columns: 1fr; } .board { grid-template-columns: 1fr; } header { align-items: flex-start; gap: 16px; } .identity { flex-wrap: wrap; } }

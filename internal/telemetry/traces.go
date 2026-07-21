@@ -16,6 +16,10 @@ import (
 // NewTracerProvider exports sampled spans to the configured OTLP/HTTP endpoint.
 // The Collector decides where those spans are sent or stored.
 func NewTracerProvider(ctx context.Context, environment string) (*sdktrace.TracerProvider, error) {
+	return NewTracerProviderFor(ctx, environment, "noapp")
+}
+
+func NewTracerProviderFor(ctx context.Context, environment, serviceName string) (*sdktrace.TracerProvider, error) {
 	exporter, err := otlptracehttp.New(ctx)
 	if err != nil {
 		return nil, err
@@ -25,7 +29,7 @@ func NewTracerProvider(ctx context.Context, environment string) (*sdktrace.Trace
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
 		resource.WithAttributes(
-			semconv.ServiceName("noapp"),
+			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion("1.0.0"),
 			attribute.String("deployment.environment.name", environment),
 		),

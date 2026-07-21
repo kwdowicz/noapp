@@ -15,6 +15,10 @@ import (
 // NewMeterProvider exports cumulative metrics to the configured OTLP/HTTP
 // endpoint on a short interval suitable for this local experimentation stack.
 func NewMeterProvider(ctx context.Context, environment string) (*sdkmetric.MeterProvider, error) {
+	return NewMeterProviderFor(ctx, environment, "noapp")
+}
+
+func NewMeterProviderFor(ctx context.Context, environment, serviceName string) (*sdkmetric.MeterProvider, error) {
 	exporter, err := otlpmetrichttp.New(ctx)
 	if err != nil {
 		return nil, err
@@ -24,7 +28,7 @@ func NewMeterProvider(ctx context.Context, environment string) (*sdkmetric.Meter
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
 		resource.WithAttributes(
-			semconv.ServiceName("noapp"),
+			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion("1.0.0"),
 			attribute.String("deployment.environment.name", environment),
 		),
