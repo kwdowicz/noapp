@@ -24,3 +24,39 @@ datasources:
     jsonData:
       httpMethod: POST
       timeInterval: 5s
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: false
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -2s
+        spanEndTimeShift: 2s
+        filterByTraceID: true
+        filterBySpanID: false
+        customQuery: false
+        tags:
+          - key: service.name
+            value: service_name
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: -2m
+        spanEndTimeShift: 2m
+        tags:
+          - key: service.name
+            value: service_name
+        queries:
+          - name: Request rate
+            query: sum(rate(noapp_http_server_request_count_total{$$__tags}[5m]))
+      nodeGraph:
+        enabled: true
+      streamingEnabled:
+        search: true
+        metrics: true
+      spanBar:
+        type: Duration

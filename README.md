@@ -18,12 +18,12 @@ PostgreSQL 17 (db container + persistent named volume)
 OpenTelemetry Collector ---- native OTLP/HTTP ----> Loki ---- queries ----> Grafana
           |
           |---- Prometheus endpoint ----> Prometheus ---- queries ----> Grafana
-          `---- trace debug output only (no trace backend or persistence yet)
+          `---- OTLP/gRPC traces ----> Tempo ---- queries ----> Grafana
 
 Traffic Simulator UI (:8081) ---- synthetic user activity ----> Go application (:8080)
 ```
 
-The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. Incoming requests create server spans, and each PostgreSQL operation creates a child database span. W3C Trace Context and baggage are accepted from callers. Logs written with the request context carry the active trace and span IDs, which provides trace-to-log correlation. The Collector currently prints spans through its debug exporter but does not retain them. Logs go to Loki and metrics are exposed for Prometheus to scrape. Grafana starts with Loki and Prometheus provisioned. Docker Compose creates an explicit bridge network named `noapp-network`; PostgreSQL, Loki, and the Collector receivers are not published to the host.
+The Go binary uses the standard HTTP server and embeds the static UI into the executable. The API accesses PostgreSQL through `pgx`. Incoming requests create server spans, and each PostgreSQL operation creates a child database span. W3C Trace Context and baggage are accepted from callers. Logs written with the request context carry the active trace and span IDs, which provides trace-to-log correlation. The Collector prints spans through its debug exporter and also sends them to Tempo for persistent local storage and TraceQL searches. Logs go to Loki and metrics are exposed for Prometheus to scrape. Grafana starts with Loki, Prometheus, and Tempo provisioned. Docker Compose creates an explicit bridge network named `noapp-network`; PostgreSQL, Loki, Tempo, and the Collector receivers are not published to the host.
 
 ## Directory structure
 
@@ -44,6 +44,7 @@ The Go binary uses the standard HTTP server and embeds the static UI into the ex
 |-- otel/collector.yaml         # OTLP logs, metrics, and debug-only traces pipelines
 |-- loki/config.yaml            # Local filesystem log storage
 |-- prometheus/prometheus.yaml  # Collector scrape configuration
+|-- tempo/tempo.yaml            # Single-binary Tempo with local trace storage
 |-- grafana/provisioning/       # Automatically provisioned data sources
 |-- Dockerfile                  # Multi-stage Go image build
 |-- Dockerfile.simulator        # Separate simulator image build
@@ -71,6 +72,14 @@ Grafana is available at <http://localhost:3000> with development credentials `ad
 ```
 
 Loki stores log data in the persistent `noapp-loki-data` volume. Grafana configuration and UI state persist in `noapp-grafana-data`.
+
+The provisioned **Tempo** data source is available in Grafana Explore. Select Tempo and use the Search tab, or run this TraceQL query to list NoApp traces:
+
+```traceql
+{ resource.service.name = "noapp" }
+```
+
+Opening a span provides a **Logs for this span** link to the corresponding Loki records and a **Request rate** link to related Prometheus metrics. Tempo stores local development trace blocks in the persistent `noapp-tempo-data` volume; the single-binary setup uses Tempo's default 14-day block retention.
 
 The **NoApp / NoApp HTTP Latency** dashboard is provisioned automatically. It includes overall P50/P95/P99 latency, percentile history, P95 and average latency by route, a route selector, and request rate for traffic context. Open it directly at <http://localhost:3000/d/noapp-http-latency/noapp-http-latency>.
 
@@ -151,15 +160,7 @@ docker compose logs --since=1m otel-collector | Select-String -Pattern "Traces|T
 
 One trace contains an HTTP server span named from the matched route (for example, `GET /api/projects`) and child PostgreSQL spans. Server errors mark the HTTP span as failed; 4xx responses remain normal server spans because they are commonly expected client outcomes. The development sampler records every trace. This is useful for experimentation but should normally be replaced with lower-rate or tail-based sampling under production traffic.
 
-There is deliberately no trace backend yet. The Collector's detailed debug output proves that spans arrive, but it is not searchable and is lost with container logs. Reasonable next choices are:
-
-| Backend | Best fit | Main trade-off |
-|---|---|---|
-| Grafana Tempo | Best match for this existing Grafana/Loki/Prometheus stack; Grafana exploration, TraceQL, and scalable object storage | Adds a trace service and storage configuration; local single-binary mode is simpler than production deployment |
-| Jaeger | Fastest standalone developer experience and a dedicated trace UI | Its all-in-one in-memory mode is not durable; production still needs scalable storage and overlaps somewhat with the existing Collector |
-| Zipkin | Simple UI and useful compatibility with older Zipkin instrumentation | Less natural in this Grafana/OpenTelemetry-first stack and has less capable trace querying than Tempo's TraceQL |
-
-Tempo is the recommended next addition here because Grafana is already the shared exploration UI. Jaeger is a good alternative when a self-contained tracing UI is more important than a unified Grafana workflow.
+Tempo runs here in monolithic mode with local filesystem storage, which is appropriate for this development stack. A production deployment should use object storage and revisit retention, sizing, high availability, authentication, and sampling.
 
 Stop the stack while retaining database data:
 
@@ -167,7 +168,7 @@ Stop the stack while retaining database data:
 docker compose down
 ```
 
-To remove the containers **and all NoApp database, Loki, Prometheus, and Grafana data**, run `docker compose down -v`.
+To remove the containers **and all NoApp database, Loki, Prometheus, Tempo, and Grafana data**, run `docker compose down -v`.
 
 ## REST API overview
 
@@ -241,4 +242,4 @@ docker compose ps
 docker network inspect noapp-network
 ```
 
-OpenTelemetry logs, metrics, HTTP server spans, PostgreSQL child spans, propagation, and trace/log correlation form the current instrumentation layer. The Go traces and metrics signals are stable; the Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades. A trace backend can be added behind the Collector without changing application instrumentation.
+OpenTelemetry logs, metrics, HTTP server spans, PostgreSQL child spans, propagation, trace/log correlation, and Tempo storage form the current instrumentation layer. The Go traces and metrics signals are stable; the Logs SDK is currently beta, so its pinned dependencies may require coordinated upgrades.
